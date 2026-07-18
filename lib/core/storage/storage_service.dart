@@ -13,6 +13,8 @@ class StorageService {
   static const String _keyStoragePath = 'settings_storage_path';
   static const String _keySyncWifiOnly = 'settings_sync_wifi_only';
   static const String _keySyncFrequency = 'settings_sync_frequency';
+  static const String _keyAiMode = 'settings_ai_mode';
+  static const String _keyGridSize = 'settings_grid_size';
 
   // Theme Mode: 'system', 'light', 'dark'
   String getThemeMode() => _prefs.getString(_keyThemeMode) ?? 'system';
@@ -44,6 +46,14 @@ class StorageService {
 
   String getSyncFrequency() => _prefs.getString(_keySyncFrequency) ?? 'daily';
   Future<bool> setSyncFrequency(String value) => _prefs.setString(_keySyncFrequency, value);
+
+  // AI Mode: 'local', 'hybrid', 'byok'
+  String getAiMode() => _prefs.getString(_keyAiMode) ?? 'local';
+  Future<bool> setAiMode(String value) => _prefs.setString(_keyAiMode, value);
+
+  // Gallery grid column count
+  int getGridSize() => _prefs.getInt(_keyGridSize) ?? 3;
+  Future<bool> setGridSize(int value) => _prefs.setInt(_keyGridSize, value);
 
   // Helper method to clear all preferences (for debugging or settings reset)
   Future<bool> clearAll() => _prefs.clear();

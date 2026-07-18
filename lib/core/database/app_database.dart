@@ -2,10 +2,12 @@ import 'package:path/path.dart';
 import 'package:sqflite/sqflite.dart';
 
 import '../../domain/models/ai_job.dart';
+import '../../domain/models/photo_metadata.dart';
 import '../errors/app_exception.dart';
 import '../logging/app_logger.dart';
 import 'daos/ai_job_dao.dart';
 import 'daos/favorites_dao.dart';
+import 'daos/photo_metadata_dao.dart';
 
 /// Central SQLite database for AI Gallery metadata.
 class AppDatabase {
@@ -13,11 +15,12 @@ class AppDatabase {
 
   static AppDatabase? _instance;
   static const _dbName = 'ai_gallery.db';
-  static const _dbVersion = 2;
+  static const _dbVersion = 3;
 
   final Database _db;
   late final FavoritesDao favorites = FavoritesDao(_db);
   late final AiJobDao aiJobs = AiJobDao(_db);
+  late final PhotoMetadataDao photoMetadata = PhotoMetadataDao(_db);
 
   /// Opens or returns the singleton database instance.
   static Future<AppDatabase> open({AppLogger? logger}) async {
@@ -51,11 +54,23 @@ class AppDatabase {
     if (version >= 2) {
       await _createAiMetadataTables(db);
     }
+    if (version >= 3) {
+      await _createPhotoMetadataTable(db);
+      await _createIndexStatusTable(db);
+    }
   }
 
-  static Future<void> _onUpgrade(Database db, int oldVersion, int newVersion) async {
+  static Future<void> _onUpgrade(
+    Database db,
+    int oldVersion,
+    int newVersion,
+  ) async {
     if (oldVersion < 2) {
       await _createAiMetadataTables(db);
+    }
+    if (oldVersion < 3) {
+      await _createPhotoMetadataTable(db);
+      await _createIndexStatusTable(db);
     }
   }
 
@@ -127,5 +142,48 @@ class AppDatabase {
         completed_at TEXT
       )
     ''');
+  }
+
+  static Future<void> _createPhotoMetadataTable(Database db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS photo_metadata (
+        photo_id TEXT PRIMARY KEY,
+        width INTEGER NOT NULL,
+        height INTEGER NOT NULL,
+        file_size_bytes INTEGER NOT NULL,
+        mime_type TEXT,
+        date_created TEXT,
+        date_modified TEXT,
+        camera_make TEXT,
+        camera_model TEXT,
+        iso INTEGER,
+        shutter_speed REAL,
+        aperture REAL,
+        latitude REAL,
+        longitude REAL,
+        orientation INTEGER NOT NULL DEFAULT 0,
+        dominant_color INTEGER,
+        average_color INTEGER,
+        brightness REAL,
+        contrast REAL,
+        blur_score REAL,
+        quality_score REAL,
+        indexed_at TEXT NOT NULL
+      )
+    ''');
+  }
+
+  static Future<void> _createIndexStatusTable(Database db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS index_status (
+        id INTEGER PRIMARY KEY DEFAULT 0,
+        last_scanned_at TEXT,
+        last_photo_count INTEGER DEFAULT 0
+      )
+    ''');
+    // Insert initial row if it doesn't exist
+    await db.insert('index_status', {
+      'id': 0,
+    }, conflictAlgorithm: ConflictAlgorithm.ignore);
   }
 }

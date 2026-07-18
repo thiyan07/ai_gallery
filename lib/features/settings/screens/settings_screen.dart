@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/theme/theme_providers.dart';
 import '../../onboarding/providers/onboarding_provider.dart';
+import '../../indexing/screens/indexing_screen.dart';
 import '../providers/settings_providers.dart';
 import 'api_keys_screen.dart';
 
@@ -21,9 +22,7 @@ class SettingsScreen extends ConsumerWidget {
     final theme = Theme.of(context);
 
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Settings'),
-      ),
+      appBar: AppBar(title: const Text('Settings')),
       body: ListView(
         padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
         children: [
@@ -43,9 +42,18 @@ class SettingsScreen extends ConsumerWidget {
                 }
               },
               items: const [
-                DropdownMenuItem(value: ThemeMode.system, child: Text('System (Auto)')),
-                DropdownMenuItem(value: ThemeMode.light, child: Text('Light Mode')),
-                DropdownMenuItem(value: ThemeMode.dark, child: Text('Dark Mode')),
+                DropdownMenuItem(
+                  value: ThemeMode.system,
+                  child: Text('System (Auto)'),
+                ),
+                DropdownMenuItem(
+                  value: ThemeMode.light,
+                  child: Text('Light Mode'),
+                ),
+                DropdownMenuItem(
+                  value: ThemeMode.dark,
+                  child: Text('Dark Mode'),
+                ),
               ],
             ),
           ),
@@ -64,14 +72,17 @@ class SettingsScreen extends ConsumerWidget {
                   child: ListView.separated(
                     scrollDirection: Axis.horizontal,
                     itemCount: AppTheme.accentColors.length,
-                    separatorBuilder: (context, index) => const SizedBox(width: 12),
+                    separatorBuilder: (context, index) =>
+                        const SizedBox(width: 12),
                     itemBuilder: (context, index) {
                       final color = AppTheme.accentColors[index];
                       final isSelected = accentColor.value == color.value;
 
                       return GestureDetector(
                         onTap: () {
-                          ref.read(accentColorProvider.notifier).setAccentColor(color);
+                          ref
+                              .read(accentColorProvider.notifier)
+                              .setAccentColor(color);
                         },
                         child: Container(
                           width: 40,
@@ -80,7 +91,9 @@ class SettingsScreen extends ConsumerWidget {
                             color: color,
                             shape: BoxShape.circle,
                             border: Border.all(
-                              color: isSelected ? theme.colorScheme.onSurface : Colors.transparent,
+                              color: isSelected
+                                  ? theme.colorScheme.onSurface
+                                  : Colors.transparent,
                               width: 3,
                             ),
                             boxShadow: [
@@ -88,11 +101,15 @@ class SettingsScreen extends ConsumerWidget {
                                 color: color.withOpacity(0.4),
                                 blurRadius: 6,
                                 offset: const Offset(0, 2),
-                              )
+                              ),
                             ],
                           ),
                           child: isSelected
-                              ? const Icon(Icons.check, color: Colors.white, size: 20)
+                              ? const Icon(
+                                  Icons.check,
+                                  color: Colors.white,
+                                  size: 20,
+                                )
                               : null,
                         ),
                       );
@@ -112,7 +129,9 @@ class SettingsScreen extends ConsumerWidget {
               decoration: BoxDecoration(
                 color: theme.colorScheme.primaryContainer.withOpacity(0.15),
                 borderRadius: BorderRadius.circular(16),
-                border: Border.all(color: theme.colorScheme.primary.withOpacity(0.2)),
+                border: Border.all(
+                  color: theme.colorScheme.primary.withOpacity(0.2),
+                ),
               ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -149,7 +168,10 @@ class SettingsScreen extends ConsumerWidget {
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                Text('Example Card', style: theme.textTheme.titleSmall),
+                                Text(
+                                  'Example Card',
+                                  style: theme.textTheme.titleSmall,
+                                ),
                                 const SizedBox(height: 4),
                                 Text(
                                   'This card reflects your settings.',
@@ -161,10 +183,16 @@ class SettingsScreen extends ConsumerWidget {
                                 FilledButton(
                                   onPressed: () {},
                                   style: FilledButton.styleFrom(
-                                    minimumSize: const Size(double.infinity, 32),
+                                    minimumSize: const Size(
+                                      double.infinity,
+                                      32,
+                                    ),
                                     padding: EdgeInsets.zero,
                                   ),
-                                  child: const Text('Primary', style: TextStyle(fontSize: 12)),
+                                  child: const Text(
+                                    'Primary',
+                                    style: TextStyle(fontSize: 12),
+                                  ),
                                 ),
                               ],
                             ),
@@ -184,24 +212,34 @@ class SettingsScreen extends ConsumerWidget {
                                 Text(
                                   'Secondary Panel',
                                   style: theme.textTheme.titleSmall?.copyWith(
-                                    color: theme.colorScheme.onSecondaryContainer,
+                                    color:
+                                        theme.colorScheme.onSecondaryContainer,
                                   ),
                                 ),
                                 const SizedBox(height: 4),
                                 Text(
                                   'Accent palette styling.',
                                   style: theme.textTheme.bodySmall?.copyWith(
-                                    color: theme.colorScheme.onSecondaryContainer.withOpacity(0.8),
+                                    color: theme
+                                        .colorScheme
+                                        .onSecondaryContainer
+                                        .withOpacity(0.8),
                                   ),
                                 ),
                                 const SizedBox(height: 8),
                                 OutlinedButton(
                                   onPressed: () {},
                                   style: OutlinedButton.styleFrom(
-                                    minimumSize: const Size(double.infinity, 32),
+                                    minimumSize: const Size(
+                                      double.infinity,
+                                      32,
+                                    ),
                                     padding: EdgeInsets.zero,
                                   ),
-                                  child: const Text('Secondary', style: TextStyle(fontSize: 12)),
+                                  child: const Text(
+                                    'Secondary',
+                                    style: TextStyle(fontSize: 12),
+                                  ),
                                 ),
                               ],
                             ),
@@ -209,7 +247,7 @@ class SettingsScreen extends ConsumerWidget {
                         ),
                       ),
                     ],
-                  )
+                  ),
                 ],
               ),
             ),
@@ -222,7 +260,9 @@ class SettingsScreen extends ConsumerWidget {
           // Cloud Backup Mode Toggle
           SwitchListTile(
             title: const Text('Cloud Backup Enable'),
-            subtitle: const Text('Encrypt and upload metadata to cloud servers.'),
+            subtitle: const Text(
+              'Encrypt and upload metadata to cloud servers.',
+            ),
             secondary: const Icon(Icons.cloud_upload_outlined),
             value: cloudBackupEnabled,
             onChanged: (val) {
@@ -234,7 +274,9 @@ class SettingsScreen extends ConsumerWidget {
           if (cloudBackupEnabled) ...[
             SwitchListTile(
               title: const Text('Sync on Wi-Fi Only'),
-              subtitle: const Text('Restricts syncing to Wi-Fi connections to save mobile data.'),
+              subtitle: const Text(
+                'Restricts syncing to Wi-Fi connections to save mobile data.',
+              ),
               secondary: const Icon(Icons.wifi_outlined),
               value: syncWifiOnly,
               onChanged: (val) {
@@ -261,7 +303,10 @@ class SettingsScreen extends ConsumerWidget {
             ),
             // Sync status Dashboard
             Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+              padding: const EdgeInsets.symmetric(
+                horizontal: 16.0,
+                vertical: 8.0,
+              ),
               child: Card(
                 elevation: 0,
                 color: theme.colorScheme.surfaceContainerHighest,
@@ -273,7 +318,10 @@ class SettingsScreen extends ConsumerWidget {
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
                           Text('Last Synced:'),
-                          Text('Today, 12:45 PM', style: TextStyle(fontWeight: FontWeight.bold)),
+                          Text(
+                            'Today, 12:45 PM',
+                            style: TextStyle(fontWeight: FontWeight.bold),
+                          ),
                         ],
                       ),
                       SizedBox(height: 6),
@@ -281,7 +329,13 @@ class SettingsScreen extends ConsumerWidget {
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
                           Text('Pending Items:'),
-                          Text('0 files', style: TextStyle(color: Colors.green, fontWeight: FontWeight.bold)),
+                          Text(
+                            '0 files',
+                            style: TextStyle(
+                              color: Colors.green,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
                         ],
                       ),
                       SizedBox(height: 6),
@@ -289,7 +343,10 @@ class SettingsScreen extends ConsumerWidget {
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
                           Text('Cloud Storage Used:'),
-                          Text('1.2 GB / 100 GB', style: TextStyle(fontWeight: FontWeight.bold)),
+                          Text(
+                            '1.2 GB / 100 GB',
+                            style: TextStyle(fontWeight: FontWeight.bold),
+                          ),
                         ],
                       ),
                     ],
@@ -299,10 +356,29 @@ class SettingsScreen extends ConsumerWidget {
             ),
           ],
 
+          // AI Indexing Section
+          _buildSectionHeader(theme, 'AI Indexing'),
+          ListTile(
+            title: const Text('Index Photos'),
+            subtitle: const Text(
+              'Scan photos, extract metadata, and prepare for AI search.',
+            ),
+            leading: const Icon(Icons.auto_awesome_outlined),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (context) => const IndexingScreen()),
+              );
+            },
+          ),
+          const SizedBox(height: 8),
           // API Keys Settings Trigger
           ListTile(
             title: const Text('AI Provider Credentials'),
-            subtitle: const Text('Configure API keys for Google Vision, OpenAI, Anthropic.'),
+            subtitle: const Text(
+              'Configure API keys for Google Vision, OpenAI, Anthropic.',
+            ),
             leading: const Icon(Icons.vpn_key_outlined),
             trailing: const Icon(Icons.chevron_right),
             onTap: () {
@@ -320,7 +396,9 @@ class SettingsScreen extends ConsumerWidget {
           // Telemetry Toggle
           SwitchListTile(
             title: const Text('Anonymous Telemetry'),
-            subtitle: const Text('Opt-in to send crash reports and usage statistics. No media content is gathered.'),
+            subtitle: const Text(
+              'Opt-in to send crash reports and usage statistics. No media content is gathered.',
+            ),
             secondary: const Icon(Icons.analytics_outlined),
             value: telemetryEnabled,
             onChanged: (val) {
@@ -341,20 +419,32 @@ class SettingsScreen extends ConsumerWidget {
           _buildSectionHeader(theme, 'Advanced & Maintenance'),
 
           ListTile(
-            title: const Text('Reset Onboarding Wizard', style: TextStyle(color: Colors.red)),
-            subtitle: const Text('Restarts the first-time welcome tutorial on next launch.'),
+            title: const Text(
+              'Reset Onboarding Wizard',
+              style: TextStyle(color: Colors.red),
+            ),
+            subtitle: const Text(
+              'Restarts the first-time welcome tutorial on next launch.',
+            ),
             leading: const Icon(Icons.restart_alt, color: Colors.red),
             onTap: () async {
               final confirm = await showDialog<bool>(
                 context: context,
                 builder: (context) => AlertDialog(
                   title: const Text('Reset Onboarding?'),
-                  content: const Text('Are you sure you want to reset the onboarding wizard? The app will close and restart in configuration mode.'),
+                  content: const Text(
+                    'Are you sure you want to reset the onboarding wizard? The app will close and restart in configuration mode.',
+                  ),
                   actions: [
-                    TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
+                    TextButton(
+                      onPressed: () => Navigator.pop(context, false),
+                      child: const Text('Cancel'),
+                    ),
                     FilledButton(
                       onPressed: () => Navigator.pop(context, true),
-                      style: FilledButton.styleFrom(backgroundColor: Colors.red),
+                      style: FilledButton.styleFrom(
+                        backgroundColor: Colors.red,
+                      ),
                       child: const Text('Reset'),
                     ),
                   ],
