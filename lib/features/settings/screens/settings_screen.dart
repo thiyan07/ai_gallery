@@ -76,7 +76,8 @@ class SettingsScreen extends ConsumerWidget {
                         const SizedBox(width: 12),
                     itemBuilder: (context, index) {
                       final color = AppTheme.accentColors[index];
-                      final isSelected = accentColor.value == color.value;
+                      final isSelected =
+                          accentColor.toARGB32() == color.toARGB32();
 
                       return GestureDetector(
                         onTap: () {
@@ -98,7 +99,7 @@ class SettingsScreen extends ConsumerWidget {
                             ),
                             boxShadow: [
                               BoxShadow(
-                                color: color.withOpacity(0.4),
+                                color: color.withValues(alpha: 0.4),
                                 blurRadius: 6,
                                 offset: const Offset(0, 2),
                               ),
@@ -127,10 +128,12 @@ class SettingsScreen extends ConsumerWidget {
             child: Container(
               padding: const EdgeInsets.all(16),
               decoration: BoxDecoration(
-                color: theme.colorScheme.primaryContainer.withOpacity(0.15),
+                color: theme.colorScheme.primaryContainer.withValues(
+                  alpha: 0.15,
+                ),
                 borderRadius: BorderRadius.circular(16),
                 border: Border.all(
-                  color: theme.colorScheme.primary.withOpacity(0.2),
+                  color: theme.colorScheme.primary.withValues(alpha: 0.2),
                 ),
               ),
               child: Column(
@@ -223,7 +226,7 @@ class SettingsScreen extends ConsumerWidget {
                                     color: theme
                                         .colorScheme
                                         .onSecondaryContainer
-                                        .withOpacity(0.8),
+                                        .withValues(alpha: 0.8),
                                   ),
                                 ),
                                 const SizedBox(height: 8),

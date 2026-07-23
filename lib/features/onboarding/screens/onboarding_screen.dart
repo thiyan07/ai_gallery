@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:confetti/confetti.dart';
 import '../providers/onboarding_provider.dart';
-import '../../../core/theme/theme_providers.dart';
 
 class OnboardingScreen extends ConsumerStatefulWidget {
   const OnboardingScreen({super.key});
@@ -13,11 +12,14 @@ class OnboardingScreen extends ConsumerStatefulWidget {
 
 class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
   late ConfettiController _confettiController;
+  bool _hasPlayedConfetti = false;
 
   @override
   void initState() {
     super.initState();
-    _confettiController = ConfettiController(duration: const Duration(seconds: 3));
+    _confettiController = ConfettiController(
+      duration: const Duration(seconds: 3),
+    );
   }
 
   @override
@@ -31,9 +33,15 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
     final onboardingState = ref.watch(onboardingProvider);
     final theme = Theme.of(context);
 
-    // If step is 5 (Done) and confetti isn't playing, start it
-    if (onboardingState.currentStep == 5) {
+    // Play confetti only once when reaching step 5
+    if (onboardingState.currentStep == 5 && !_hasPlayedConfetti) {
+      _hasPlayedConfetti = true;
       _confettiController.play();
+    }
+
+    // Reset confetti flag if user goes back from step 5
+    if (onboardingState.currentStep != 5) {
+      _hasPlayedConfetti = false;
     }
 
     return Scaffold(
@@ -56,7 +64,11 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
                   ),
                 );
               },
-              child: _buildStepContent(onboardingState.currentStep, onboardingState, theme),
+              child: _buildStepContent(
+                onboardingState.currentStep,
+                onboardingState,
+                theme,
+              ),
             ),
 
             // Top Header: Skip button & Step indicator
@@ -76,7 +88,9 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
                     ),
                     TextButton(
                       onPressed: () async {
-                        await ref.read(onboardingProvider.notifier).completeOnboarding();
+                        await ref
+                            .read(onboardingProvider.notifier)
+                            .completeOnboarding();
                       },
                       child: const Text('Skip'),
                     ),
@@ -96,7 +110,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
                   Colors.blue,
                   Colors.pink,
                   Colors.orange,
-                  Colors.purple
+                  Colors.purple,
                 ],
               ),
             ),
@@ -144,10 +158,10 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
               shape: BoxShape.circle,
               boxShadow: [
                 BoxShadow(
-                  color: theme.colorScheme.primary.withOpacity(0.3),
+                  color: theme.colorScheme.primary.withValues(alpha: 0.3),
                   blurRadius: 20,
                   offset: const Offset(0, 10),
-                )
+                ),
               ],
             ),
             child: const Icon(
@@ -243,7 +257,8 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
           _buildPermissionTile(
             theme: theme,
             title: 'Camera',
-            subtitle: 'Required to take new photos and scan documents directly in the app.',
+            subtitle:
+                'Required to take new photos and scan documents directly in the app.',
             icon: Icons.camera_alt,
             isGranted: state.cameraPermissionGranted,
             onChanged: (val) => notifier.togglePermission('camera'),
@@ -253,7 +268,8 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
           _buildPermissionTile(
             theme: theme,
             title: 'Photos & Files',
-            subtitle: 'Allows the app to display your media files and load metadata.',
+            subtitle:
+                'Allows the app to display your media files and load metadata.',
             icon: Icons.photo_size_select_actual,
             isGranted: state.photosPermissionGranted,
             onChanged: (val) => notifier.togglePermission('photos'),
@@ -263,7 +279,8 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
           _buildPermissionTile(
             theme: theme,
             title: 'Microphone',
-            subtitle: 'Used for conversational voice search and dictation features.',
+            subtitle:
+                'Used for conversational voice search and dictation features.',
             icon: Icons.mic,
             isGranted: state.microphonePermissionGranted,
             onChanged: (val) => notifier.togglePermission('microphone'),
@@ -326,7 +343,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
                 ),
                 borderRadius: BorderRadius.circular(16),
                 color: state.storageMode == 'local'
-                    ? theme.colorScheme.primaryContainer.withOpacity(0.2)
+                    ? theme.colorScheme.primaryContainer.withValues(alpha: 0.2)
                     : null,
               ),
               child: Row(
@@ -377,7 +394,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
                 ),
                 borderRadius: BorderRadius.circular(16),
                 color: state.storageMode == 'cloud'
-                    ? theme.colorScheme.primaryContainer.withOpacity(0.2)
+                    ? theme.colorScheme.primaryContainer.withValues(alpha: 0.2)
                     : null,
               ),
               child: Row(
@@ -428,7 +445,9 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
                     const Text('Estimated Free Space:'),
                     Text(
                       '128.4 GB Available',
-                      style: theme.textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.bold),
+                      style: theme.textTheme.bodyMedium?.copyWith(
+                        fontWeight: FontWeight.bold,
+                      ),
                     ),
                   ],
                 ),
@@ -495,7 +514,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
           // Explanation Panel
           Card(
             elevation: 0,
-            color: theme.colorScheme.secondaryContainer.withOpacity(0.3),
+            color: theme.colorScheme.secondaryContainer.withValues(alpha: 0.3),
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(16),
               side: BorderSide(color: theme.colorScheme.outlineVariant),
@@ -508,7 +527,9 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
                   const SizedBox(height: 12),
                   Text(
                     'Bring Your Own Keys',
-                    style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
+                    style: theme.textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.bold,
+                    ),
                   ),
                   const SizedBox(height: 8),
                   Text(
@@ -604,7 +625,12 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
   }
 
   // UI HELPER: Feature Row
-  Widget _buildFeatureRow(ThemeData theme, IconData icon, String title, String description) {
+  Widget _buildFeatureRow(
+    ThemeData theme,
+    IconData icon,
+    String title,
+    String description,
+  ) {
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -652,7 +678,13 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
       ),
       child: Row(
         children: [
-          Icon(icon, size: 28, color: isGranted ? theme.colorScheme.primary : theme.colorScheme.onSurfaceVariant),
+          Icon(
+            icon,
+            size: 28,
+            color: isGranted
+                ? theme.colorScheme.primary
+                : theme.colorScheme.onSurfaceVariant,
+          ),
           const SizedBox(width: 16),
           Expanded(
             child: Column(
@@ -674,10 +706,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
               ],
             ),
           ),
-          Switch(
-            value: isGranted,
-            onChanged: onChanged,
-          ),
+          Switch(value: isGranted, onChanged: onChanged),
         ],
       ),
     );

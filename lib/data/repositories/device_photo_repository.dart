@@ -1,4 +1,5 @@
 import 'package:photo_manager/photo_manager.dart';
+import 'dart:typed_data';
 
 import '../../data/datasources/device_media_datasource.dart';
 import '../../data/mappers/photo_mapper.dart';
@@ -70,4 +71,7 @@ class DevicePhotoRepository implements PhotoRepository {
     if (asset == null) return null;
     return _photoMapper.fromAsset(asset);
   }
+
+  @override
+  Future<Uint8List?> getImageBytes(String assetId) => _dataSource.getBytes(assetId);
 }

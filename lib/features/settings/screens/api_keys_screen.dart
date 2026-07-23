@@ -41,19 +41,26 @@ class _ApiKeysScreenState extends ConsumerState<ApiKeysScreen> {
     if (mounted) {
       setState(() {
         _isOpenAIConfigured = openai != null && openai.isNotEmpty;
-        _openAIMasked = _isOpenAIConfigured ? _maskKey(openai!) : 'Not configured';
+        _openAIMasked = _isOpenAIConfigured
+            ? _maskKey(openai!)
+            : 'Not configured';
 
         _isGoogleVisionConfigured = vision != null && vision.isNotEmpty;
-        _googleVisionMasked = _isGoogleVisionConfigured ? _maskKey(vision!) : 'Not configured';
+        _googleVisionMasked = _isGoogleVisionConfigured
+            ? _maskKey(vision!)
+            : 'Not configured';
 
         _isAnthropicConfigured = anthropic != null && anthropic.isNotEmpty;
-        _anthropicMasked = _isAnthropicConfigured ? _maskKey(anthropic!) : 'Not configured';
+        _anthropicMasked = _isAnthropicConfigured
+            ? _maskKey(anthropic!)
+            : 'Not configured';
       });
     }
   }
 
   String _maskKey(String key) {
-    if (key.length <= 8) return '••••${key.substring(key.length > 4 ? key.length - 4 : 0)}';
+    if (key.length <= 8)
+      return '••••${key.substring(key.length > 4 ? key.length - 4 : 0)}';
     return '${key.substring(0, 4)}••••••••${key.substring(key.length - 4)}';
   }
 
@@ -127,7 +134,9 @@ class _ApiKeysScreenState extends ConsumerState<ApiKeysScreen> {
       builder: (context) {
         return AlertDialog(
           title: Text('Delete $provider Key?'),
-          content: Text('Are you sure you want to remove the saved $provider API key? Cloud capabilities relying on this provider will be disabled.'),
+          content: Text(
+            'Are you sure you want to remove the saved $provider API key? Cloud capabilities relying on this provider will be disabled.',
+          ),
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(context, false),
@@ -224,10 +233,7 @@ class _ApiKeysScreenState extends ConsumerState<ApiKeysScreen> {
 
   void _showSuccessSnackBar(String message) {
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(message),
-        backgroundColor: Colors.green,
-      ),
+      SnackBar(content: Text(message), backgroundColor: Colors.green),
     );
   }
 
@@ -238,16 +244,16 @@ class _ApiKeysScreenState extends ConsumerState<ApiKeysScreen> {
     final theme = Theme.of(context);
 
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('API Providers Config'),
-      ),
+      appBar: AppBar(title: const Text('API Providers Config')),
       body: ListView(
         padding: const EdgeInsets.all(16.0),
         children: [
           // Operation Modes Segmented Selector
           Text(
             'Operational Mode',
-            style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
+            style: theme.textTheme.titleMedium?.copyWith(
+              fontWeight: FontWeight.bold,
+            ),
           ),
           const SizedBox(height: 8),
           SegmentedButton<String>(
@@ -290,7 +296,9 @@ class _ApiKeysScreenState extends ConsumerState<ApiKeysScreen> {
                 children: [
                   Text(
                     _getModeTitle(activeMode),
-                    style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.bold),
+                    style: theme.textTheme.titleSmall?.copyWith(
+                      fontWeight: FontWeight.bold,
+                    ),
                   ),
                   const SizedBox(height: 4),
                   Text(
@@ -308,7 +316,9 @@ class _ApiKeysScreenState extends ConsumerState<ApiKeysScreen> {
           // API Key Fields Section
           Text(
             'Provider API Keys',
-            style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
+            style: theme.textTheme.titleMedium?.copyWith(
+              fontWeight: FontWeight.bold,
+            ),
           ),
           const SizedBox(height: 12),
 
@@ -319,7 +329,8 @@ class _ApiKeysScreenState extends ConsumerState<ApiKeysScreen> {
             maskedKey: _openAIMasked,
             isConfigured: _isOpenAIConfigured,
             isTesting: _isTestingOpenAI,
-            helpText: 'Used for advanced image description and smart natural language search reasoning. Get a key at platform.openai.com.',
+            helpText:
+                'Used for advanced image description and smart natural language search reasoning. Get a key at platform.openai.com.',
           ),
           const SizedBox(height: 16),
 
@@ -330,7 +341,8 @@ class _ApiKeysScreenState extends ConsumerState<ApiKeysScreen> {
             maskedKey: _googleVisionMasked,
             isConfigured: _isGoogleVisionConfigured,
             isTesting: _isTestingVision,
-            helpText: 'Powers high-accuracy Optical Character Recognition (OCR) and scene tagging in cloud modes. Get a key at console.cloud.google.com.',
+            helpText:
+                'Powers high-accuracy Optical Character Recognition (OCR) and scene tagging in cloud modes. Get a key at console.cloud.google.com.',
           ),
           const SizedBox(height: 16),
 
@@ -341,7 +353,8 @@ class _ApiKeysScreenState extends ConsumerState<ApiKeysScreen> {
             maskedKey: _anthropicMasked,
             isConfigured: _isAnthropicConfigured,
             isTesting: _isTestingAnthropic,
-            helpText: 'Provides alternative LLM intelligence for conversational search and tagging. Get a key at console.anthropic.com.',
+            helpText:
+                'Provides alternative LLM intelligence for conversational search and tagging. Get a key at console.anthropic.com.',
           ),
         ],
       ),
@@ -361,7 +374,9 @@ class _ApiKeysScreenState extends ConsumerState<ApiKeysScreen> {
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(16),
         side: BorderSide(
-          color: isConfigured ? theme.colorScheme.primary.withOpacity(0.5) : theme.colorScheme.outlineVariant,
+          color: isConfigured
+              ? theme.colorScheme.primary.withValues(alpha: 0.5)
+              : theme.colorScheme.outlineVariant,
           width: isConfigured ? 1.5 : 1,
         ),
       ),
@@ -375,27 +390,36 @@ class _ApiKeysScreenState extends ConsumerState<ApiKeysScreen> {
               children: [
                 Icon(
                   Icons.key,
-                  color: isConfigured ? theme.colorScheme.primary : theme.colorScheme.onSurfaceVariant,
+                  color: isConfigured
+                      ? theme.colorScheme.primary
+                      : theme.colorScheme.onSurfaceVariant,
                 ),
                 const SizedBox(width: 8),
                 Text(
                   name,
-                  style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
+                  style: theme.textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.bold,
+                  ),
                 ),
                 const SizedBox(width: 8),
                 // Indicator Badge
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 2,
+                  ),
                   decoration: BoxDecoration(
                     color: isConfigured
-                        ? Colors.green.withOpacity(0.15)
+                        ? Colors.green.withValues(alpha: 0.15)
                         : theme.colorScheme.surfaceContainerHighest,
                     borderRadius: BorderRadius.circular(6),
                   ),
                   child: Text(
                     isConfigured ? 'Configured' : 'Missing',
                     style: theme.textTheme.labelSmall?.copyWith(
-                      color: isConfigured ? Colors.green[800] : theme.colorScheme.onSurfaceVariant,
+                      color: isConfigured
+                          ? Colors.green[800]
+                          : theme.colorScheme.onSurfaceVariant,
                       fontWeight: FontWeight.bold,
                     ),
                   ),
@@ -410,7 +434,11 @@ class _ApiKeysScreenState extends ConsumerState<ApiKeysScreen> {
                   ),
                 ],
                 IconButton(
-                  icon: Icon(isConfigured ? Icons.edit_outlined : Icons.add_circle_outline),
+                  icon: Icon(
+                    isConfigured
+                        ? Icons.edit_outlined
+                        : Icons.add_circle_outline,
+                  ),
                   onPressed: () => _addOrEditKey(name, maskedKey),
                   tooltip: isConfigured ? 'Edit Key' : 'Add Key',
                 ),
@@ -422,7 +450,9 @@ class _ApiKeysScreenState extends ConsumerState<ApiKeysScreen> {
               'Key: $maskedKey',
               style: theme.textTheme.bodyMedium?.copyWith(
                 fontFamily: 'monospace',
-                color: isConfigured ? theme.colorScheme.onSurface : theme.colorScheme.onSurfaceVariant,
+                color: isConfigured
+                    ? theme.colorScheme.onSurface
+                    : theme.colorScheme.onSurfaceVariant,
               ),
             ),
             const SizedBox(height: 8),

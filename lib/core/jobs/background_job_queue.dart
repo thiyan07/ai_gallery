@@ -1,8 +1,9 @@
 import 'dart:async';
 
-import '../../domain/models/ai_job.dart';
-import '../database/app_database.dart';
-import '../logging/app_logger.dart';
+import '../../../domain/models/ai_job.dart';
+import '../../../core/database/app_database.dart';
+import '../../../core/database/daos/ai_job_dao.dart';
+import '../../../core/logging/app_logger.dart';
 
 /// Callback invoked to process a single AI job off the UI thread.
 typedef AIJobProcessor = Future<void> Function(AIJob job);
@@ -17,7 +18,7 @@ class BackgroundJobQueue {
         _logger = logger,
         _processor = processor ?? _noopProcessor;
 
-  final dynamic _dao;
+  final AiJobDao _dao;
   final AppLogger _logger;
   final AIJobProcessor _processor;
 
@@ -32,6 +33,29 @@ class BackgroundJobQueue {
     _emit(job);
     _logger.info('Enqueued AI job ${job.id} (${job.type.name})');
     unawaited(_processNext());
+  }
+
+  /// Updates job status with optional progress and error message.
+  Future<void> updateJobStatus(
+    String jobId, {
+    AIJobStatus? status,
+    double? progress,
+    DateTime? startedAt,
+    DateTime? completedAt,
+    String? errorMessage,
+  }) async {
+    final job = await _dao.getById(jobId);
+    if (job == null) return;
+
+    final updated = job.copyWith(
+      status: status,
+      progress: progress ?? job.progress,
+      startedAt: startedAt ?? job.startedAt,
+      completedAt: completedAt ?? job.completedAt,
+      errorMessage: errorMessage ?? job.errorMessage,
+    );
+    await _dao.upsert(updated);
+    _emit(updated);
   }
 
   /// Returns a stream of updates for a specific job.

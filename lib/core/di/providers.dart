@@ -2,6 +2,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../ai/ai_manager.dart';
+import '../../ai/providers/embedding_provider.dart';
+import '../../ai/providers/local_embedding_provider.dart';
 import '../../features/indexing/services/image_scanner.dart';
 import '../../features/indexing/services/indexing_engine.dart';
 import '../../features/indexing/services/metadata_extractor.dart';
@@ -13,42 +15,46 @@ import '../../data/repositories/settings_repository_impl.dart';
 import '../../domain/repositories/favorites_repository.dart';
 import '../../domain/repositories/photo_repository.dart';
 import '../../domain/repositories/settings_repository.dart';
+import '../../domain/models/user_settings.dart';
 import '../database/app_database.dart';
 import '../jobs/background_job_queue.dart';
 import '../logging/app_logger.dart';
-import '../storage/secure_storage_service.dart';
 import '../storage/storage_service.dart';
+import '../storage/secure_storage_service.dart';
+import '../services/model_downloader.dart';
+import '../services/model_manager.dart';
+
+// Provider for raw SharedPreferences instance
+final sharedPreferencesProvider = Provider<SharedPreferences>((ref) {
+  throw UnimplementedError(
+    'Initialize SharedPreferences in main and override this provider',
+  );
+});
 
 // ─────────────────────────────────────────────
 // Core services
 // ─────────────────────────────────────────────
-
-/// Raw SharedPreferences instance — must be overridden in main().
-final sharedPreferencesProvider = Provider<SharedPreferences>((ref) {
-  throw UnimplementedError(
-    'Initialize SharedPreferences in main and override sharedPreferencesProvider',
-  );
-});
 
 /// Application-wide logger.
 final appLoggerProvider = Provider<AppLogger>((ref) {
   return const ConsoleAppLogger();
 });
 
-/// SharedPreferences-backed storage service.
-final storageServiceProvider = Provider<StorageService>((ref) {
-  return StorageService(ref.watch(sharedPreferencesProvider));
-});
-
-/// Secure storage for API keys.
-final secureStorageServiceProvider = Provider<SecureStorageService>((ref) {
-  return SecureStorageService();
-});
-
 /// SQLite database singleton.
 final appDatabaseProvider = FutureProvider<AppDatabase>((ref) async {
   final logger = ref.watch(appLoggerProvider);
   return AppDatabase.open(logger: logger);
+});
+
+/// Storage service for app settings (SharedPreferences wrapper).
+final storageServiceProvider = Provider<StorageService>((ref) {
+  final prefs = ref.watch(sharedPreferencesProvider);
+  return StorageService(prefs);
+});
+
+/// Secure storage service for API keys.
+final secureStorageServiceProvider = Provider<SecureStorageService>((ref) {
+  return SecureStorageService();
 });
 
 // ─────────────────────────────────────────────
@@ -96,14 +102,52 @@ final backgroundJobQueueProvider =
   return BackgroundJobQueue(database: db, logger: logger);
 });
 
+/// Current user settings from the repository.
+final userSettingsProvider = Provider((ref) {
+  return ref.watch(settingsRepositoryProvider).getSettings();
+});
+
+/// Embedding provider (local or cloud based on settings).
+final embeddingProviderProvider = FutureProvider<EmbeddingProvider?>((ref) async {
+  final logger = ref.watch(appLoggerProvider);
+  final settings = ref.watch(userSettingsProvider);
+
+  if (settings.aiMode == AiMode.local) {
+    final modelManager = ref.watch(modelManagerProvider);
+    return LocalEmbeddingProvider(
+      logger: logger,
+      modelManager: modelManager,
+    );
+  }
+
+  // TODO: Add cloud providers (OpenAI, Google Vision, Anthropic)
+  // For hybrid/BYOK modes, return appropriate cloud provider
+  // if (settings.aiMode == AiMode.byok || settings.aiMode == AiMode.hybrid) {
+  //   return CloudEmbeddingProvider(...);
+  // }
+
+  return null;
+});
+
 final aiManagerProvider = FutureProvider<AIManager>((ref) async {
   final jobQueue = await ref.watch(backgroundJobQueueProvider.future);
   final secureStorage = ref.watch(secureStorageServiceProvider);
   final settingsRepo = ref.watch(settingsRepositoryProvider);
+  final photoRepo = ref.watch(photoRepositoryProvider);
+  final db = await ref.watch(appDatabaseProvider.future);
+  final logger = ref.watch(appLoggerProvider);
+
+  // Resolve the embedding provider from the future provider
+  final embeddingProvider = await ref.watch(embeddingProviderProvider.future);
+
   return AIManagerImpl(
     jobQueue: jobQueue,
     secureStorage: secureStorage,
     settingsProvider: settingsRepo.getSettings,
+    embeddingProvider: () => embeddingProvider,
+    photoRepository: photoRepo,
+    database: db,
+    logger: logger,
   );
 });
 
@@ -136,10 +180,28 @@ final indexingEngineProvider = FutureProvider<IndexingEngine>((ref) async {
 });
 
 // ─────────────────────────────────────────────
-// User settings snapshot
+// Model Management
 // ─────────────────────────────────────────────
 
-/// Current user settings from the repository.
-final userSettingsProvider = Provider((ref) {
-  return ref.watch(settingsRepositoryProvider).getSettings();
+/// Provider that initializes the model downloader on app startup.
+final modelDownloaderInitializerProvider = FutureProvider<void>((ref) async {
+  final downloader = ref.watch(modelDownloaderProvider);
+  await downloader.initialize();
 });
+
+/// Model downloader service.
+final modelDownloaderProvider = Provider<ModelDownloader>((ref) {
+  final logger = ref.watch(appLoggerProvider);
+  return ModelDownloader(logger: logger);
+});
+
+/// Model manager for selecting and managing ONNX models.
+final modelManagerProvider = Provider<ModelManager>((ref) {
+  final downloader = ref.watch(modelDownloaderProvider);
+  final logger = ref.watch(appLoggerProvider);
+  return ModelManager(downloader: downloader, logger: logger);
+});
+
+// ─────────────────────────────────────────────
+// AI Embeddings & Search - Defined in features/search/providers/search_providers.dart
+// ─────────────────────────────────────────────

@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:photo_manager/photo_manager.dart';
 
 import '../../core/errors/app_exception.dart';
@@ -74,5 +76,12 @@ class DeviceMediaDataSource {
       throw NotFoundException('Album not found: $albumId');
     }
     return album;
+  }
+
+  /// Fetches raw image bytes for an asset by id.
+  Future<Uint8List?> getBytes(String assetId) async {
+    final asset = await AssetEntity.fromId(assetId);
+    if (asset == null) return null;
+    return asset.originBytes;
   }
 }

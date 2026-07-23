@@ -1,6 +1,9 @@
+import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:photo_manager/photo_manager.dart';
-import '../services/media_service.dart';
+import '../../../core/di/providers.dart';
+import '../../../domain/repositories/photo_repository.dart';
+import '../../../core/logging/app_logger.dart';
 
 // ─────────────────────────────────────────────
 // Permission
@@ -13,13 +16,40 @@ final mediaPermissionProvider =
 );
 
 class MediaPermissionNotifier extends AsyncNotifier<bool> {
+  late final PhotoRepository _repository;
+
   @override
-  Future<bool> build() => MediaService.requestPermission();
+  Future<bool> build() async {
+    try {
+      _repository = ref.watch(photoRepositoryProvider);
+      final granted = await _repository.requestPermission();
+      _log('Permission status: ${granted ? "granted" : "denied"}');
+      return granted;
+    } catch (e, stackTrace) {
+      _log('Error checking permissions: $e', isError: true);
+      _log('Stack trace: $stackTrace', isError: true);
+      rethrow;
+    }
+  }
 
   /// Re-request permission (e.g. after user changes settings).
   Future<void> refresh() async {
-    state = const AsyncLoading();
-    state = await AsyncValue.guard(MediaService.requestPermission);
+    try {
+      state = const AsyncLoading();
+      state = await AsyncValue.guard(() => _repository.requestPermission());
+    } catch (e, stackTrace) {
+      _log('Error refreshing permissions: $e', isError: true);
+      _log('Stack trace: $stackTrace', isError: true);
+      rethrow;
+    }
+  }
+
+  void _log(String message, {bool isError = false}) {
+    if (isError) {
+      debugPrint('🔴 [MediaPermissionNotifier] $message');
+    } else {
+      debugPrint('🟢 [MediaPermissionNotifier] $message');
+    }
   }
 }
 
@@ -34,16 +64,44 @@ final albumListProvider =
 );
 
 class AlbumListNotifier extends AsyncNotifier<List<AssetPathEntity>> {
+  late final PhotoRepository _repository;
+
   @override
   Future<List<AssetPathEntity>> build() async {
-    final granted = await ref.watch(mediaPermissionProvider.future);
-    if (!granted) return [];
-    return MediaService.getAlbums();
+    try {
+      final granted = await ref.watch(mediaPermissionProvider.future);
+      if (!granted) {
+        _log('Permission not granted for album list');
+        return [];
+      }
+      _repository = ref.watch(photoRepositoryProvider);
+      final albums = await _repository.getAlbumEntities();
+      _log('Loaded ${albums.length} albums');
+      return albums;
+    } catch (e, stackTrace) {
+      _log('Error loading albums: $e', isError: true);
+      _log('Stack trace: $stackTrace', isError: true);
+      rethrow;
+    }
   }
 
   Future<void> refresh() async {
-    state = const AsyncLoading();
-    state = await AsyncValue.guard(() => MediaService.getAlbums());
+    try {
+      state = const AsyncLoading();
+      state = await AsyncValue.guard(() => _repository.getAlbumEntities());
+    } catch (e, stackTrace) {
+      _log('Error refreshing albums: $e', isError: true);
+      _log('Stack trace: $stackTrace', isError: true);
+      rethrow;
+    }
+  }
+
+  void _log(String message, {bool isError = false}) {
+    if (isError) {
+      debugPrint('🔴 [AlbumListNotifier] $message');
+    } else {
+      debugPrint('🟢 [AlbumListNotifier] $message');
+    }
   }
 }
 
@@ -53,15 +111,15 @@ class AlbumListNotifier extends AsyncNotifier<List<AssetPathEntity>> {
 
 /// The album the user is currently viewing (null = "All Photos").
 final selectedAlbumProvider =
-    NotifierProvider<SelectedAlbumNotifier, AssetPathEntity?>(
+    NotifierProvider<SelectedAlbumNotifier, String?>(
   SelectedAlbumNotifier.new,
 );
 
-class SelectedAlbumNotifier extends Notifier<AssetPathEntity?> {
+class SelectedAlbumNotifier extends Notifier<String?> {
   @override
-  AssetPathEntity? build() => null;
+  String? build() => null;
 
-  void select(AssetPathEntity? album) => state = album;
+  void select(String? albumId) => state = albumId;
 }
 
 // ─────────────────────────────────────────────
@@ -76,27 +134,84 @@ final photoListProvider =
 
 class PhotoListNotifier extends AsyncNotifier<List<AssetEntity>> {
   static const _pageSize = 80;
+  late final PhotoRepository _repository;
+  int _nextPage = 1;
 
   @override
   Future<List<AssetEntity>> build() async {
+    // Watch selected album and album list - changes to either will rebuild this provider
+    final selectedAlbumId = ref.watch(selectedAlbumProvider);
     final albums = await ref.watch(albumListProvider.future);
-    final selected = ref.watch(selectedAlbumProvider);
 
-    if (albums.isEmpty) return [];
+    if (albums.isEmpty) {
+      return [];
+    }
 
-    final album = selected ?? albums.first;
-    return MediaService.getPhotos(album, pageSize: _pageSize);
+    _repository = ref.watch(photoRepositoryProvider);
+    _nextPage = 1;
+
+    final albumId = selectedAlbumId ?? albums.first.id;
+    final album = await _repository.getAlbumEntityById(albumId);
+
+    // If album is not found, use first album as fallback
+    final selectedAlbum = album ?? albums.first;
+
+    // Log for debugging
+    _log('Loading album: ${selectedAlbum.name} (id: ${selectedAlbum.id})');
+
+    final photos = await _repository.getPhotoEntities(
+      album: selectedAlbum,
+      pageSize: _pageSize,
+    );
+
+    _log('Loaded ${photos.length} photos from album');
+    return photos;
   }
 
-  /// Load the next page and append results.
-  Future<void> loadMore(AssetPathEntity album, int page) async {
-    final more =
-        await MediaService.getPhotos(album, page: page, pageSize: _pageSize);
-    state = AsyncData([...state.value ?? [], ...more]);
+  void _log(String message, {bool isError = false}) {
+    if (isError) {
+      debugPrint('🔴 [PhotoListNotifier] $message');
+    } else {
+      debugPrint('🟢 [PhotoListNotifier] $message');
+    }
+  }
+
+  /// Load the next page and append results. Uses currently selected album.
+  Future<void> loadMore() async {
+    if (state.isLoading) return;
+
+    // Read current selected album and album list
+    final selectedAlbumId = ref.read(selectedAlbumProvider);
+    final albums = ref.read(albumListProvider).value;
+
+    if (albums == null || albums.isEmpty) {
+      _log('No albums available for loadMore', isError: true);
+      return;
+    }
+
+    final albumId = selectedAlbumId ?? albums.first.id;
+
+    try {
+      final album = await _repository.getAlbumEntityById(albumId);
+      if (album == null) {
+        _log('Album not found for ID: $albumId', isError: true);
+        return;
+      }
+
+      final more =
+          await _repository.getPhotoEntities(album: album, page: _nextPage, pageSize: _pageSize);
+      _nextPage++;
+      _log('Loaded ${more.length} more photos (page $_nextPage)');
+      state = AsyncData([...state.value ?? [], ...more]);
+    } catch (e, stackTrace) {
+      _log('Error loading more photos: $e', isError: true);
+      _log('Stack trace: $stackTrace', isError: true);
+      // Don't rethrow here to avoid breaking infinite scroll
+    }
   }
 
   Future<void> refresh() async {
-    state = const AsyncLoading();
+    _nextPage = 1; // Reset to page 1 on refresh
     ref.invalidateSelf();
   }
 }
@@ -112,12 +227,15 @@ final gridSizeProvider =
 class GridSizeNotifier extends Notifier<int> {
   @override
   int build() {
-    // Default 3 columns; persistence wired in gallery_home_screen via
-    // StorageService to keep providers decoupled.
-    return 3;
+    // Load from StorageService
+    final storage = ref.watch(storageServiceProvider);
+    return storage.getGridSize();
   }
 
   void setSize(int columns) {
-    if (columns >= 2 && columns <= 6) state = columns;
+    if (columns < 2 || columns > 6) return;
+    state = columns;
+    final storage = ref.read(storageServiceProvider);
+    storage.setGridSize(columns);
   }
 }

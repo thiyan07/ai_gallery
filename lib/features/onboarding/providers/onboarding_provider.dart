@@ -1,5 +1,8 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import '../../../core/theme/theme_providers.dart';
+import 'package:photo_manager/photo_manager.dart';
+
+import '../../../core/di/providers.dart' as di_providers;
+import '../../../core/theme/theme_providers.dart' as theme_providers;
 
 class OnboardingState {
   final int currentStep;
@@ -44,7 +47,7 @@ class OnboardingState {
 class OnboardingNotifier extends Notifier<OnboardingState> {
   @override
   OnboardingState build() {
-    final storageService = ref.watch(storageServiceProvider);
+    final storageService = ref.watch(di_providers.storageServiceProvider);
     final completed = storageService.isOnboardingCompleted();
     final cloudBackup = storageService.isCloudBackupEnabled();
     final path = storageService.getStoragePath();
@@ -75,6 +78,46 @@ class OnboardingNotifier extends Notifier<OnboardingState> {
     }
   }
 
+  /// Actually request permission from the OS and update state.
+  Future<void> requestPermission(String type) async {
+    RequestType requestType;
+    switch (type) {
+      case 'camera':
+        requestType = RequestType.image;
+        break;
+      case 'photos':
+        requestType = RequestType.common;
+        break;
+      case 'microphone':
+        requestType = RequestType.audio;
+        break;
+      default:
+        return;
+    }
+
+    final result = await PhotoManager.requestPermissionExtend(
+      requestOption: PermissionRequestOption(
+        androidPermission: AndroidPermission(
+          type: requestType,
+          mediaLocation: true,
+        ),
+      ),
+    );
+    final granted = result.isAuth || result == PermissionState.limited;
+
+    switch (type) {
+      case 'camera':
+        state = state.copyWith(cameraPermissionGranted: granted);
+        break;
+      case 'photos':
+        state = state.copyWith(photosPermissionGranted: granted);
+        break;
+      case 'microphone':
+        state = state.copyWith(microphonePermissionGranted: granted);
+        break;
+    }
+  }
+
   void setStorageMode(String mode) {
     state = state.copyWith(storageMode: mode);
   }
@@ -84,17 +127,35 @@ class OnboardingNotifier extends Notifier<OnboardingState> {
   }
 
   Future<void> completeOnboarding() async {
-    final storageService = ref.read(storageServiceProvider);
+    final storageService = ref.read(di_providers.storageServiceProvider);
     await storageService.setOnboardingCompleted(true);
     await storageService.setCloudBackupEnabled(state.storageMode == 'cloud');
     if (state.customStoragePath != null) {
       await storageService.setStoragePath(state.customStoragePath!);
     }
     state = state.copyWith(isCompleted: true, currentStep: 5);
+
+    // Download the default SigLIP model in background after onboarding
+    _downloadDefaultModel();
+  }
+
+  void _downloadDefaultModel() {
+    // Fire and forget - download the default model in background
+    ref.read(di_providers.modelDownloaderProvider).downloadModel(
+      modelId: 'google/siglip-base-patch16-224',
+      filename: 'onnx/model.onnx',
+      progressCallback: (progress) {
+        // Could update UI with progress if needed
+      },
+    ).catchError((e, st) {
+      final logger = ref.read(di_providers.appLoggerProvider);
+      logger.warning('Failed to download default model', error: e, stackTrace: st);
+      return 'error'; // Return a string to satisfy the FutureOr<String> type
+    });
   }
 
   Future<void> resetOnboarding() async {
-    final storageService = ref.read(storageServiceProvider);
+    final storageService = ref.read(di_providers.storageServiceProvider);
     await storageService.setOnboardingCompleted(false);
     state = OnboardingState(isCompleted: false, currentStep: 1);
   }

@@ -1,5 +1,7 @@
 import 'dart:async';
 
+import 'package:photo_manager/photo_manager.dart';
+
 import '../../../core/database/app_database.dart';
 import '../../../core/logging/app_logger.dart';
 import '../../../domain/models/index_status.dart';
@@ -117,16 +119,18 @@ class IndexingEngine {
       ));
 
       try {
-        // TODO: Get actual AssetEntity from photo.id
-        // For now, skip full extraction
-        final metadata = PhotoMetadata(
-          photoId: photo.id,
-          width: photo.width,
-          height: photo.height,
-          fileSizeBytes: 0, // TODO: Get actual file size
-          orientation: 0,
-          indexedAt: DateTime.now(),
-        );
+        // Get AssetEntity to extract full metadata
+        final asset = await AssetEntity.fromId(photo.id);
+        if (asset == null) {
+          _logger.warning('Asset not found for photo ID: ${photo.id}');
+          _emitStatus(_currentStatus.copyWith(
+            failedPhotos: _currentStatus.failedPhotos + 1,
+          ));
+          continue;
+        }
+
+        // Extract full metadata including EXIF, color analysis, quality metrics
+        final metadata = await _extractor.extractFromAsset(asset);
         await _db.photoMetadata.upsert(metadata);
 
         _emitStatus(_currentStatus.copyWith(

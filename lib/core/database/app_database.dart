@@ -1,12 +1,14 @@
 import 'package:path/path.dart';
 import 'package:sqflite/sqflite.dart';
 
-import '../../domain/models/ai_job.dart';
-import '../../domain/models/photo_metadata.dart';
-import '../errors/app_exception.dart';
+import '../errors/app_exception.dart' as app_exceptions;
 import '../logging/app_logger.dart';
 import 'daos/ai_job_dao.dart';
+import 'daos/embedding_dao.dart';
+import 'daos/face_dao.dart';
 import 'daos/favorites_dao.dart';
+import 'daos/object_tag_dao.dart';
+import 'daos/ocr_dao.dart';
 import 'daos/photo_metadata_dao.dart';
 
 /// Central SQLite database for AI Gallery metadata.
@@ -18,9 +20,17 @@ class AppDatabase {
   static const _dbVersion = 3;
 
   final Database _db;
+
+  /// Getter for the underlying SQLite database for raw queries.
+  Database get database => _db;
+
   late final FavoritesDao favorites = FavoritesDao(_db);
   late final AiJobDao aiJobs = AiJobDao(_db);
   late final PhotoMetadataDao photoMetadata = PhotoMetadataDao(_db);
+  late final FaceDao faces = FaceDao(_db);
+  late final ObjectTagDao objectTags = ObjectTagDao(_db);
+  late final OcrDao ocrResults = OcrDao(_db);
+  late final EmbeddingDao embeddings = EmbeddingDao(_db);
 
   /// Opens or returns the singleton database instance.
   static Future<AppDatabase> open({AppLogger? logger}) async {
@@ -39,7 +49,10 @@ class AppDatabase {
       return _instance!;
     } catch (e, st) {
       logger?.error('Failed to open AppDatabase', error: e, stackTrace: st);
-      throw DatabaseException('Failed to open database', cause: e);
+      throw app_exceptions.DatabaseException(
+        'Failed to open database',
+        cause: e,
+      );
     }
   }
 

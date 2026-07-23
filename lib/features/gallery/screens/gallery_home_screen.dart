@@ -7,6 +7,7 @@ import '../widgets/photo_tile.dart';
 import '../widgets/bulk_action_bar.dart';
 import '../../settings/screens/settings_screen.dart';
 import 'favorites_screen.dart';
+import '../../search/search.dart';
 
 /// Root shell with bottom navigation: Gallery | Favorites | Settings.
 class GalleryHomeScreen extends ConsumerStatefulWidget {
@@ -73,7 +74,6 @@ class _GalleryTab extends ConsumerStatefulWidget {
 
 class _GalleryTabState extends ConsumerState<_GalleryTab> {
   final ScrollController _scrollController = ScrollController();
-  int _page = 0;
   bool _loadingMore = false;
 
   @override
@@ -97,15 +97,9 @@ class _GalleryTabState extends ConsumerState<_GalleryTab> {
 
   Future<void> _loadNextPage() async {
     if (_loadingMore) return;
-    final albums = ref.read(albumListProvider).value;
-    final selected = ref.read(selectedAlbumProvider);
-    if (albums == null || albums.isEmpty) return;
+    // loadMore now reads the current album internally
     setState(() => _loadingMore = true);
-    _page++;
-    await ref.read(photoListProvider.notifier).loadMore(
-          selected ?? albums.first,
-          _page,
-        );
+    await ref.read(photoListProvider.notifier).loadMore();
     if (mounted) setState(() => _loadingMore = false);
   }
 
@@ -124,13 +118,12 @@ class _GalleryTabState extends ConsumerState<_GalleryTab> {
       appBar: AppBar(
         title: isSelecting
             ? Text('${selection.length} selected')
-            : _AlbumDropdown(albums: albums, selected: selected),
+            : _AlbumDropdown(albums: albums, selectedAlbumId: selected),
         actions: [
           if (isSelecting) ...[
             TextButton(
               onPressed: () {
-                final all =
-                    photos.value?.map((a) => a.id).toList() ?? [];
+                final all = photos.value?.map((a) => a.id).toList() ?? [];
                 selectionNotifier.selectAll(all);
               },
               child: const Text('All'),
@@ -145,7 +138,11 @@ class _GalleryTabState extends ConsumerState<_GalleryTab> {
             IconButton(
               icon: const Icon(Icons.search),
               onPressed: () {
-                // Phase 5: Search
+                Navigator.of(context).push(
+                  MaterialPageRoute(
+                    builder: (_) => const SearchScreen(),
+                  ),
+                );
               },
             ),
           ],
@@ -159,7 +156,43 @@ class _GalleryTabState extends ConsumerState<_GalleryTab> {
 
           return photos.when(
             loading: () => const Center(child: CircularProgressIndicator()),
-            error: (e, _) => Center(child: Text('Error: $e')),
+            error: (e, _) => Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(
+                    Icons.folder_off,
+                    size: 48,
+                    color: Theme.of(context).colorScheme.error,
+                  ),
+                  const SizedBox(height: 16),
+                  Text(
+                    'Error loading albums',
+                    style: Theme.of(context)
+                        .textTheme
+                        .titleLarge
+                        ?.copyWith(fontWeight: FontWeight.bold),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    'Please try again or check your storage permissions.',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                  const SizedBox(height: 24),
+                  FilledButton.icon(
+                    icon: const Icon(Icons.refresh),
+                    label: const Text('Try Again'),
+                    onPressed: () {
+                      ref.refresh(albumListProvider);
+                      ref.refresh(mediaPermissionProvider);
+                    },
+                  ),
+                ],
+              ),
+            ),
             data: (photoList) {
               if (photoList.isEmpty) {
                 return _emptyState(context);
@@ -168,20 +201,17 @@ class _GalleryTabState extends ConsumerState<_GalleryTab> {
                 children: [
                   RefreshIndicator(
                     onRefresh: () async {
-                      _page = 0;
                       await ref.read(photoListProvider.notifier).refresh();
                     },
                     child: GridView.builder(
                       controller: _scrollController,
                       padding: const EdgeInsets.all(2),
-                      gridDelegate:
-                          SliverGridDelegateWithFixedCrossAxisCount(
+                      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
                         crossAxisCount: gridSize,
                         crossAxisSpacing: 2,
                         mainAxisSpacing: 2,
                       ),
-                      itemCount:
-                          photoList.length + (_loadingMore ? 1 : 0),
+                      itemCount: photoList.length + (_loadingMore ? 1 : 0),
                       itemBuilder: (context, index) {
                         if (index == photoList.length) {
                           return const Center(
@@ -224,19 +254,19 @@ class _GalleryTabState extends ConsumerState<_GalleryTab> {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(Icons.photo_library_outlined,
-                size: 72,
-                color: Theme.of(context)
-                    .colorScheme
-                    .onSurfaceVariant
-                    .withOpacity(0.5)),
+            Icon(
+              Icons.photo_library_outlined,
+              size: 72,
+              color: Theme.of(
+                context,
+              ).colorScheme.onSurfaceVariant.withValues(alpha: 0.5),
+            ),
             const SizedBox(height: 16),
             Text(
               'Photo access required',
-              style: Theme.of(context)
-                  .textTheme
-                  .titleLarge
-                  ?.copyWith(fontWeight: FontWeight.bold),
+              style: Theme.of(
+                context,
+              ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold),
             ),
             const SizedBox(height: 8),
             Text(
@@ -271,18 +301,20 @@ class _GalleryTabState extends ConsumerState<_GalleryTab> {
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(Icons.image_not_supported_outlined,
-              size: 72,
-              color: Theme.of(context)
-                  .colorScheme
-                  .onSurfaceVariant
-                  .withOpacity(0.5)),
+          Icon(
+            Icons.image_not_supported_outlined,
+            size: 72,
+            color: Theme.of(
+              context,
+            ).colorScheme.onSurfaceVariant.withValues(alpha: 0.5),
+          ),
           const SizedBox(height: 16),
-          Text('No photos found',
-              style: Theme.of(context)
-                  .textTheme
-                  .titleLarge
-                  ?.copyWith(fontWeight: FontWeight.bold)),
+          Text(
+            'No photos found',
+            style: Theme.of(
+              context,
+            ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold),
+          ),
           const SizedBox(height: 8),
           Text(
             'This album appears to be empty.',
@@ -302,9 +334,9 @@ class _GalleryTabState extends ConsumerState<_GalleryTab> {
 
 class _AlbumDropdown extends ConsumerWidget {
   final AsyncValue<List<AssetPathEntity>> albums;
-  final AssetPathEntity? selected;
+  final String? selectedAlbumId;
 
-  const _AlbumDropdown({required this.albums, required this.selected});
+  const _AlbumDropdown({required this.albums, required this.selectedAlbumId});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -313,22 +345,24 @@ class _AlbumDropdown extends ConsumerWidget {
       error: (_, __) => const Text('AI Gallery'),
       data: (list) {
         if (list.isEmpty) return const Text('AI Gallery');
-        final current = selected ?? list.first;
+        final current = list.firstWhere(
+          (album) => album.id == selectedAlbumId,
+          orElse: () => list.first,
+        );
         return DropdownButtonHideUnderline(
-          child: DropdownButton<AssetPathEntity>(
-            value: current,
+          child: DropdownButton<String>(
+            value: selectedAlbumId ?? current.id,
             isDense: true,
-            style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                  fontWeight: FontWeight.bold,
-                ),
-            onChanged: (album) {
-              ref.read(selectedAlbumProvider.notifier).select(album);
-              ref.read(photoListProvider.notifier).refresh();
+            style: Theme.of(
+              context,
+            ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
+            onChanged: (albumId) {
+              ref.read(selectedAlbumProvider.notifier).select(albumId);
             },
             items: list
                 .map(
                   (a) => DropdownMenuItem(
-                    value: a,
+                    value: a.id,
                     child: Text(a.name, overflow: TextOverflow.ellipsis),
                   ),
                 )

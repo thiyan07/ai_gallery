@@ -1,4 +1,5 @@
 import 'package:photo_manager/photo_manager.dart';
+import 'dart:typed_data';
 
 import '../models/album.dart';
 import '../models/photo.dart';
@@ -40,4 +41,7 @@ abstract class PhotoRepository {
 
   /// Fetches a single photo by id.
   Future<Photo?> getById(String id);
+
+  /// Fetches raw image bytes for an asset by id.
+  Future<Uint8List?> getImageBytes(String assetId);
 }

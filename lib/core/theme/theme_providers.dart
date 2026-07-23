@@ -6,7 +6,9 @@ import '../storage/secure_storage_service.dart';
 
 // Provider for raw SharedPreferences instance
 final sharedPreferencesProvider = Provider<SharedPreferences>((ref) {
-  throw UnimplementedError('Initialize SharedPreferences in main and override this provider');
+  throw UnimplementedError(
+    'Initialize SharedPreferences in main and override this provider',
+  );
 });
 
 // Provider for StorageService wrapping SharedPreferences
@@ -62,7 +64,9 @@ class ThemeModeNotifier extends Notifier<ThemeMode> {
   }
 }
 
-final themeModeProvider = NotifierProvider<ThemeModeNotifier, ThemeMode>(ThemeModeNotifier.new);
+final themeModeProvider = NotifierProvider<ThemeModeNotifier, ThemeMode>(
+  ThemeModeNotifier.new,
+);
 
 // Accent Color Notifier and Provider
 class AccentColorNotifier extends Notifier<Color> {
@@ -81,8 +85,10 @@ class AccentColorNotifier extends Notifier<Color> {
 
   Future<void> setAccentColor(Color color) async {
     state = color;
-    await _storageService.setAccentColor(color.value);
+    await _storageService.setAccentColor(color.toARGB32());
   }
 }
 
-final accentColorProvider = NotifierProvider<AccentColorNotifier, Color>(AccentColorNotifier.new);
+final accentColorProvider = NotifierProvider<AccentColorNotifier, Color>(
+  AccentColorNotifier.new,
+);

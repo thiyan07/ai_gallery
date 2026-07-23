@@ -6,6 +6,8 @@ import '../../../domain/models/photo.dart';
 
 /// Service for scanning gallery images and detecting changes.
 class ImageScanner {
+  static const _pageSize = 1000;
+
   ImageScanner({
     required PhotoMetadataDao metadataDao,
     required AppLogger logger,
@@ -33,22 +35,51 @@ class ImageScanner {
     final paths = await PhotoManager.getAssetPathList(type: RequestType.image);
 
     for (final path in paths) {
-      final assets = await path.getAssetListRange(start: 0, end: 100000);
-      for (final asset in assets) {
-        final photo = Photo(
-          id: asset.id,
-          width: asset.width,
-          height: asset.height,
-          createdAt: asset.createDateTime,
-          isVideo: asset.type == AssetType.video,
-        );
-        currentPhotos[photo.id] = photo;
+      int page = 0;
+      bool hasMore = true;
 
-        if (!indexedIds.contains(photo.id)) {
-          newPhotos.add(photo);
-        } else {
-          // TODO: Check if photo has been modified since last index
-          // For now, assume no modifications
+      while (hasMore) {
+        final assets = await path.getAssetListRange(
+          start: page * _pageSize,
+          end: (page + 1) * _pageSize,
+        );
+
+        if (assets.isEmpty) {
+          hasMore = false;
+          break;
+        }
+
+        for (final asset in assets) {
+          final photo = Photo(
+            id: asset.id,
+            width: asset.width,
+            height: asset.height,
+            createdAt: asset.createDateTime,
+            isVideo: asset.type == AssetType.video,
+          );
+          currentPhotos[photo.id] = photo;
+
+          if (!indexedIds.contains(photo.id)) {
+            newPhotos.add(photo);
+          } else {
+            // Check if photo has been modified since last index
+            final existingMeta = await _metadataDao.getById(photo.id);
+            if (existingMeta != null) {
+              final assetModified = asset.modifiedDateTime;
+              if (assetModified != null &&
+                  existingMeta.dateModified != null &&
+                  assetModified.isAfter(existingMeta.dateModified!)) {
+                modifiedPhotos.add(photo);
+              }
+            }
+          }
+        }
+
+        page++;
+        // Safety limit to prevent infinite loops
+        if (page > 10000) {
+          _logger.warning('Hit page limit (10000 pages) during scan');
+          break;
         }
       }
     }

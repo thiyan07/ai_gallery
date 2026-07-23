@@ -36,10 +36,8 @@ class PhotoTile extends ConsumerWidget {
         } else {
           Navigator.of(context).push(
             MaterialPageRoute(
-              builder: (_) => PhotoViewScreen(
-                assets: allAssets,
-                initialIndex: index,
-              ),
+              builder: (_) =>
+                  PhotoViewScreen(assets: allAssets, initialIndex: index),
             ),
           );
         }
@@ -69,8 +67,10 @@ class PhotoTile extends ConsumerWidget {
                 fit: BoxFit.cover,
                 errorBuilder: (_, __, ___) => Container(
                   color: Colors.grey[200],
-                  child: const Icon(Icons.broken_image_outlined,
-                      color: Colors.grey),
+                  child: const Icon(
+                    Icons.broken_image_outlined,
+                    color: Colors.grey,
+                  ),
                 ),
               ),
             ),
@@ -81,11 +81,10 @@ class PhotoTile extends ConsumerWidget {
                 duration: const Duration(milliseconds: 150),
                 decoration: BoxDecoration(
                   color: isSelected
-                      ? Theme.of(context)
-                          .colorScheme
-                          .primary
-                          .withOpacity(0.35)
-                      : Colors.black.withOpacity(0.15),
+                      ? Theme.of(
+                          context,
+                        ).colorScheme.primary.withValues(alpha: 0.35)
+                      : Colors.black.withValues(alpha: 0.15),
                   borderRadius: BorderRadius.circular(isSelected ? 4 : 0),
                 ),
               ),
@@ -105,7 +104,11 @@ class PhotoTile extends ConsumerWidget {
                       shape: BoxShape.circle,
                       color: Theme.of(context).colorScheme.primary,
                     ),
-                    child: const Icon(Icons.check, size: 16, color: Colors.white),
+                    child: const Icon(
+                      Icons.check,
+                      size: 16,
+                      color: Colors.white,
+                    ),
                   ),
                 ),
               ),
@@ -131,8 +134,10 @@ class PhotoTile extends ConsumerWidget {
                 bottom: 4,
                 left: 4,
                 child: Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 5,
+                    vertical: 2,
+                  ),
                   decoration: BoxDecoration(
                     color: Colors.black54,
                     borderRadius: BorderRadius.circular(4),

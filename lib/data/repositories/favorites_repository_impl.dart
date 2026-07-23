@@ -1,5 +1,5 @@
-import '../../data/datasources/local_favorites_datasource.dart';
-import 'favorites_repository.dart';
+import '../datasources/local_favorites_datasource.dart';
+import '../../domain/repositories/favorites_repository.dart';
 
 /// SQLite-backed implementation of [FavoritesRepository].
 class FavoritesRepositoryImpl implements FavoritesRepository {
