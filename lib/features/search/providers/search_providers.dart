@@ -2,14 +2,44 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:ai_gallery/ai/providers/embedding_provider.dart';
 import 'package:ai_gallery/ai/providers/local_embedding_provider.dart';
 import 'package:ai_gallery/core/di/providers.dart';
+import 'package:ai_gallery/core/logging/app_logger.dart';
 import 'package:ai_gallery/domain/models/user_settings.dart';
 import 'package:ai_gallery/features/search/services/search_service.dart';
+import 'package:ai_gallery/features/search/services/natural_language_parser.dart';
 
 // ─────────────────────────────────────────────
 // Re-export types from search_service
 // ─────────────────────────────────────────────
 
 export '../services/search_service.dart' show SearchResult, SearchFilters;
+export '../services/natural_language_parser.dart' show ParsedQuery, NaturalLanguageParser;
+
+// ─────────────────────────────────────────────
+// Natural Language Parser Provider
+// ─────────────────────────────────────────────
+
+/// Natural language query parser provider.
+final naturalLanguageParserProvider = Provider<NaturalLanguageParser>((ref) {
+  final logger = ref.watch(appLoggerProvider);
+  return NaturalLanguageParser.withLogger(logger);
+});
+
+/// Parsed query provider - parses the search query and provides structured filters.
+final parsedQueryProvider = FutureProvider<ParsedQuery>((ref) async {
+  final query = ref.watch(searchQueryProvider);
+  final parser = ref.watch(naturalLanguageParserProvider);
+
+  if (query.trim().isEmpty) {
+    return ParsedQuery(
+      semanticQuery: '',
+      filters: SearchFilters(),
+      confidence: 0.0,
+      originalQuery: query,
+    );
+  }
+
+  return parser.parse(query);
+});
 
 // ─────────────────────────────────────────────
 // Embedding Provider (uses core/providers.dart)
@@ -79,13 +109,26 @@ class SearchQueryNotifier extends Notifier<String> {
   void clear() => state = '';
 }
 
-/// Search results stream.
+/// Search results stream using natural language parsing.
+/// This watches the parsed query provider and uses the semantic query + filters for search.
 final searchResultsProvider = FutureProvider<List<SearchResult>>((ref) async {
-  final query = ref.watch(searchQueryProvider);
-  if (query.trim().isEmpty) return [];
+  // Watch the parsed query which includes both semantic query and extracted filters
+  final parsedQueryAsync = ref.watch(parsedQueryProvider);
 
-  final searchService = ref.watch(searchServiceProvider);
-  return searchService.search(query, limit: 20);
+  return parsedQueryAsync.when(
+    data: (parsedQuery) async {
+      if (parsedQuery.semanticQuery.trim().isEmpty) return [];
+
+      final searchService = ref.watch(searchServiceProvider);
+      // Use the new searchParsed method that handles semantic query + filters
+      return searchService.searchParsed(parsedQuery, limit: 20);
+    },
+    loading: () => [],
+    error: (e, st) {
+      ref.read(appLoggerProvider).error('Search error', error: e, stackTrace: st);
+      return [];
+    },
+  );
 });
 
 /// Search filters state.

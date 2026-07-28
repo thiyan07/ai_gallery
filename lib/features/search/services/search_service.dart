@@ -6,6 +6,7 @@ import '../../../core/logging/app_logger.dart';
 import '../../../domain/models/embedding.dart';
 import '../../../domain/models/photo_metadata.dart';
 import '../../../ai/providers/embedding_provider.dart';
+import 'natural_language_parser.dart';
 
 /// Result of a search query.
 class SearchResult {
@@ -142,6 +143,83 @@ class SearchService {
         }
       } else if (filters?.hasLocation == true) {
         // No metadata - skip if location required
+        continue;
+      }
+
+      results.add(SearchResult(
+        photoId: candidate.photoId,
+        score: score,
+        metadata: meta,
+      ));
+    }
+
+    // Sort by score descending
+    results.sort((a, b) => b.score.compareTo(a.score));
+
+    // Apply limit
+    return results.take(limit).toList();
+  }
+
+  /// Performs a search using a pre-parsed natural language query.
+  ///
+  /// This method uses the semantic query from the parsed result for vector search
+  /// and applies the extracted filters as hard constraints.
+  Future<List<SearchResult>> searchParsed(
+    ParsedQuery parsedQuery, {
+    int limit = 20,
+  }) async {
+    if (parsedQuery.semanticQuery.trim().isEmpty) return [];
+
+    _logger.info('Searching with parsed query: "${parsedQuery.semanticQuery}"'
+        ' (filters: ${parsedQuery.confidence})');
+
+    // Use the semantic query for embedding generation
+    final queryEmbedding = await embeddingProvider.generateTextEmbedding(parsedQuery.semanticQuery);
+
+    // Get candidate embeddings with filters applied
+    final candidates = await _getCandidateEmbeddings(parsedQuery.filters);
+
+    // Compute cosine similarity and apply metadata filters
+    final results = <SearchResult>[];
+    for (final candidate in candidates) {
+      final score = _cosineSimilarity(queryEmbedding, candidate.vector);
+
+      // Apply filter thresholds using metadata (redundant with _getCandidateEmbeddings but safe)
+      final meta = await database.photoMetadata.getById(candidate.photoId);
+      if (meta != null) {
+        if (parsedQuery.filters.minQualityScore != null &&
+            (meta.qualityScore ?? 0) < parsedQuery.filters.minQualityScore!) {
+          continue;
+        }
+        if (parsedQuery.filters.maxBlurScore != null &&
+            (meta.blurScore ?? 1.0) > parsedQuery.filters.maxBlurScore!) {
+          continue;
+        }
+        if (parsedQuery.filters.dateFrom != null || parsedQuery.filters.dateTo != null) {
+          if (meta.dateCreated != null) {
+            if (parsedQuery.filters.dateFrom != null &&
+                meta.dateCreated!.isBefore(parsedQuery.filters.dateFrom!)) {
+              continue;
+            }
+            if (parsedQuery.filters.dateTo != null &&
+                meta.dateCreated!.isAfter(parsedQuery.filters.dateTo!)) {
+              continue;
+            }
+          }
+        }
+        if (parsedQuery.filters.hasLocation == true &&
+            (meta.latitude == null || meta.longitude == null)) {
+          continue;
+        }
+        if (parsedQuery.filters.cameraMake != null &&
+            meta.cameraMake != parsedQuery.filters.cameraMake) {
+          continue;
+        }
+        if (parsedQuery.filters.cameraModel != null &&
+            meta.cameraModel != parsedQuery.filters.cameraModel) {
+          continue;
+        }
+      } else if (parsedQuery.filters.hasLocation == true) {
         continue;
       }
 

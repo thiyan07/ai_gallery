@@ -42,6 +42,7 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
     final theme = Theme.of(context);
     final query = ref.watch(searchQueryProvider);
     final resultsAsync = ref.watch(searchResultsProvider);
+    final parsedQueryAsync = ref.watch(parsedQueryProvider);
 
     return Scaffold(
       appBar: AppBar(
@@ -76,6 +77,17 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
       body: Column(
         children: [
           if (_showFilters) _buildFiltersBar(theme),
+          // Show parsed NLQ filters if any were detected
+          parsedQueryAsync.when(
+            data: (parsedQuery) {
+              if (parsedQuery.hasFilters && parsedQuery.originalQuery != null) {
+                return _buildParsedFiltersBar(theme, parsedQuery);
+              }
+              return const SizedBox.shrink();
+            },
+            loading: () => const SizedBox.shrink(),
+            error: (_, __) => const SizedBox.shrink(),
+          ),
           Expanded(
             child: resultsAsync.when(
               loading: () => const Center(child: CircularProgressIndicator()),
@@ -159,6 +171,127 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
         ),
       ),
     );
+  }
+
+  /// Shows automatically parsed filters from natural language query.
+  Widget _buildParsedFiltersBar(ThemeData theme, ParsedQuery parsedQuery) {
+    final filters = parsedQuery.filters;
+    final parsedChips = <Widget>[];
+
+    if (filters.dateFrom != null || filters.dateTo != null) {
+      String dateLabel = 'Date: ';
+      if (filters.dateFrom != null && filters.dateTo != null) {
+        dateLabel += '${_formatDate(filters.dateFrom!)} – ${_formatDate(filters.dateTo!)}';
+      } else if (filters.dateFrom != null) {
+        dateLabel += 'from ${_formatDate(filters.dateFrom!)}';
+      } else {
+        dateLabel += 'until ${_formatDate(filters.dateTo!)}';
+      }
+      parsedChips.add(_buildParsedFilterChip(theme, label: dateLabel, icon: Icons.calendar_today));
+    }
+
+    if (filters.cameraMake != null || filters.cameraModel != null) {
+      String cameraLabel = 'Camera: ';
+      if (filters.cameraMake != null && filters.cameraModel != null) {
+        cameraLabel += '${filters.cameraMake} ${filters.cameraModel}';
+      } else if (filters.cameraMake != null) {
+        cameraLabel += filters.cameraMake!;
+      } else {
+        cameraLabel += filters.cameraModel!;
+      }
+      parsedChips.add(_buildParsedFilterChip(theme, label: cameraLabel, icon: Icons.camera_alt));
+    }
+
+    if (filters.minQualityScore != null || filters.maxBlurScore != null) {
+      String qualityLabel = 'Quality: ';
+      if (filters.minQualityScore != null && filters.maxBlurScore != null) {
+        qualityLabel += 'High quality, low blur';
+      } else if (filters.minQualityScore != null) {
+        qualityLabel += 'Min quality ${(filters.minQualityScore! * 100).toInt()}%';
+      } else {
+        qualityLabel += 'Max blur ${(filters.maxBlurScore! * 100).toInt()}%';
+      }
+      parsedChips.add(_buildParsedFilterChip(theme, label: qualityLabel, icon: Icons.high_quality));
+    }
+
+    if (filters.hasLocation) {
+      parsedChips.add(_buildParsedFilterChip(theme, label: 'Has location', icon: Icons.location_on));
+    }
+
+    if (parsedChips.isEmpty) return const SizedBox.shrink();
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.primaryContainer.withValues(alpha: 0.3),
+        border: Border(
+          bottom: BorderSide(color: theme.colorScheme.primary.withValues(alpha: 0.3)),
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(
+                Icons.psychology,
+                size: 16,
+                color: theme.colorScheme.primary,
+              ),
+              const SizedBox(width: 8),
+              Text(
+                'Understood from query',
+                style: theme.textTheme.labelSmall?.copyWith(
+                  color: theme.colorScheme.primary,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              const Spacer(),
+              Text(
+                '${(parsedQuery.confidence * 100).toInt()}% confident',
+                style: theme.textTheme.labelSmall?.copyWith(
+                  color: theme.colorScheme.primary.withValues(alpha: 0.7),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: parsedChips,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildParsedFilterChip(ThemeData theme, {required String label, required IconData icon}) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.primaryContainer,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: theme.colorScheme.primary.withValues(alpha: 0.3)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 14, color: theme.colorScheme.onPrimaryContainer),
+          const SizedBox(width: 6),
+          Text(
+            label,
+            style: theme.textTheme.labelSmall?.copyWith(
+              color: theme.colorScheme.onPrimaryContainer,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  String _formatDate(DateTime date) {
+    return '${date.day}/${date.month}/${date.year}';
   }
 
   Widget _buildFilterChip(
