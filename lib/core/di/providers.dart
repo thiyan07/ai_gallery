@@ -171,10 +171,12 @@ final indexingEngineProvider = FutureProvider<IndexingEngine>((ref) async {
   final db = await ref.watch(appDatabaseProvider.future);
   final scanner = await ref.watch(imageScannerProvider.future);
   final extractor = ref.watch(metadataExtractorProvider);
+  final aiManager = await ref.watch(aiManagerProvider.future);
   return IndexingEngine(
     db: db,
     scanner: scanner,
     extractor: extractor,
+    aiManager: aiManager,
     logger: ref.watch(appLoggerProvider),
   );
 });

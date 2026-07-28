@@ -1,11 +1,15 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import '../../../core/theme/app_theme.dart';
-import '../../../core/theme/theme_providers.dart';
+import 'package:ai_gallery/core/theme/app_theme.dart';
+import 'package:ai_gallery/core/theme/theme_providers.dart';
+import 'package:ai_gallery/core/di/providers.dart' as di_providers;
+import 'package:ai_gallery/core/services/model_manager.dart';
+import 'package:ai_gallery/core/logging/app_logger.dart';
 import '../../onboarding/providers/onboarding_provider.dart';
 import '../../indexing/screens/indexing_screen.dart';
+import '../screens/api_keys_screen.dart';
+import '../screens/local_models_screen.dart';
 import '../providers/settings_providers.dart';
-import 'api_keys_screen.dart';
 
 class SettingsScreen extends ConsumerWidget {
   const SettingsScreen({super.key});
@@ -388,6 +392,22 @@ class SettingsScreen extends ConsumerWidget {
               Navigator.push(
                 context,
                 MaterialPageRoute(builder: (context) => const ApiKeysScreen()),
+              );
+            },
+          ),
+          const SizedBox(height: 8),
+          // Local Models Settings
+          ListTile(
+            title: const Text('Local Models'),
+            subtitle: const Text(
+              'Download and manage on-device embedding models for semantic search.',
+            ),
+            leading: const Icon(Icons.model_training_outlined),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (context) => const LocalModelsScreen()),
               );
             },
           ),
