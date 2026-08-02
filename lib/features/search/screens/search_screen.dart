@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../providers/search_providers.dart';
+import '../../gallery/providers/gallery_providers.dart';
 
 /// Search screen with text and image search capabilities.
 class SearchScreen extends ConsumerStatefulWidget {
@@ -310,22 +311,12 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
   }
 
   Widget _buildResultsGrid(ThemeData theme, List<SearchResult> results) {
-    return GridView.builder(
-      padding: const EdgeInsets.all(8),
-      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: 3,
-        crossAxisSpacing: 4,
-        mainAxisSpacing: 4,
-      ),
-      itemCount: results.length,
-      itemBuilder: (context, index) {
-        final result = results[index];
-        return _SearchResultTile(
-          result: result,
-          onTap: () {
-            // Navigate to photo view
-          },
-        );
+    final gridSize = ref.watch(gridSizeProvider);
+    return _SearchResultsGrid(
+      results: results,
+      gridSize: gridSize,
+      onTap: (result) {
+        // TODO: Navigate to photo view
       },
     );
   }
@@ -511,6 +502,326 @@ class _SearchResultTile extends StatelessWidget {
               ),
             ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────
+// Search results grid with pinch-to-zoom
+// ─────────────────────────────────────────────
+
+class _SearchResultsGrid extends ConsumerStatefulWidget {
+  final List<SearchResult> results;
+  final int gridSize;
+  final void Function(SearchResult) onTap;
+
+  const _SearchResultsGrid({
+    required this.results,
+    required this.gridSize,
+    required this.onTap,
+  });
+
+  @override
+  ConsumerState<_SearchResultsGrid> createState() => _SearchResultsGridState();
+}
+
+class _SearchResultsGridState extends ConsumerState<_SearchResultsGrid>
+    with TickerProviderStateMixin {
+  late AnimationController _gridAnimationController;
+  late Animation<int> _gridSizeAnimation;
+  late AnimationController _overlayAnimationController;
+  late Animation<double> _overlayOpacityAnimation;
+  late Animation<double> _overlayScaleAnimation;
+
+  int _currentGridSize = 3;
+  int _targetGridSize = 3;
+  double _pinchScale = 1.0;
+  double _lastPinchScale = 1.0;
+  bool _isPinching = false;
+  static const double _pinchSensitivity = 0.4;
+
+  @override
+  void initState() {
+    super.initState();
+    _currentGridSize = widget.gridSize;
+    _targetGridSize = widget.gridSize;
+
+    _gridAnimationController = AnimationController(
+      duration: const Duration(milliseconds: 300),
+      vsync: this,
+    );
+    _gridSizeAnimation = IntTween(
+      begin: _currentGridSize,
+      end: _targetGridSize,
+    ).animate(CurvedAnimation(
+      parent: _gridAnimationController,
+      curve: Curves.easeOutCubic,
+    ));
+
+    _overlayAnimationController = AnimationController(
+      duration: const Duration(milliseconds: 200),
+      vsync: this,
+    );
+    _overlayOpacityAnimation = Tween<double>(begin: 0.0, end: 1.0).animate(
+      CurvedAnimation(parent: _overlayAnimationController, curve: Curves.easeOut),
+    );
+    _overlayScaleAnimation = Tween<double>(begin: 0.8, end: 1.0).animate(
+      CurvedAnimation(parent: _overlayAnimationController, curve: Curves.easeOutBack),
+    );
+
+    _gridAnimationController.addListener(_onGridAnimationTick);
+  }
+
+  void _onGridAnimationTick() {
+    if (mounted) {
+      setState(() {
+        _currentGridSize = _gridSizeAnimation.value;
+      });
+    }
+  }
+
+  @override
+  void didUpdateWidget(_SearchResultsGrid oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.gridSize != widget.gridSize &&
+        _targetGridSize == _currentGridSize) {
+      _animateToGridSize(widget.gridSize);
+    }
+  }
+
+  @override
+  void dispose() {
+    _gridAnimationController.removeListener(_onGridAnimationTick);
+    _gridAnimationController.dispose();
+    _overlayAnimationController.dispose();
+    super.dispose();
+  }
+
+  void _animateToGridSize(int targetSize) {
+    if (targetSize == _targetGridSize) return;
+
+    _targetGridSize = targetSize.clamp(2, 6);
+    _gridAnimationController.reset();
+    _gridSizeAnimation = IntTween(
+      begin: _currentGridSize,
+      end: _targetGridSize,
+    ).animate(CurvedAnimation(
+      parent: _gridAnimationController,
+      curve: Curves.easeOutCubic,
+    ));
+    _gridAnimationController.forward();
+
+    // Show overlay with new grid size
+    _showOverlay();
+
+    // Persist the new grid size
+    ref.read(gridSizeProvider.notifier).setSize(_targetGridSize);
+  }
+
+  void _showOverlay() {
+    _overlayAnimationController.forward(from: 0.0).then((_) {
+      Future.delayed(const Duration(milliseconds: 800), () {
+        if (mounted && !_isPinching) {
+          _overlayAnimationController.reverse();
+        }
+      });
+    });
+  }
+
+  void _handleScaleStart(ScaleStartDetails details) {
+    _lastPinchScale = 1.0;
+    _isPinching = true;
+    _overlayAnimationController.forward();
+  }
+
+  void _handleScaleUpdate(ScaleUpdateDetails details) {
+    _pinchScale = details.scale;
+
+    // Calculate the target grid size based on pinch
+    final scaleDelta = (_pinchScale - _lastPinchScale) * _pinchSensitivity;
+
+    // Find the closest grid size
+    double normalizedScale = (_targetGridSize - 3) + scaleDelta * 4;
+    int newTarget = (normalizedScale + 3).round().clamp(2, 6);
+
+    if (newTarget != _targetGridSize) {
+      _animateToGridSize(newTarget);
+      _lastPinchScale = _pinchScale;
+    }
+  }
+
+  void _handleScaleEnd(ScaleEndDetails details) {
+    _pinchScale = 1.0;
+    _lastPinchScale = 1.0;
+    _isPinching = false;
+    _overlayAnimationController.reverse();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final results = widget.results;
+
+    return GestureDetector(
+      onScaleStart: _handleScaleStart,
+      onScaleUpdate: _handleScaleUpdate,
+      onScaleEnd: _handleScaleEnd,
+      child: Stack(
+        children: [
+          AnimatedBuilder(
+            animation: _gridAnimationController,
+            builder: (context, child) {
+              return GridView.builder(
+                padding: const EdgeInsets.all(8),
+                gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                  crossAxisCount: _currentGridSize,
+                  crossAxisSpacing: 4,
+                  mainAxisSpacing: 4,
+                ),
+                itemCount: results.length,
+                itemBuilder: (context, index) {
+                  return _AnimatedSearchResultTile(
+                    result: results[index],
+                    gridSize: _currentGridSize,
+                    onTap: () => widget.onTap(results[index]),
+                  );
+                },
+              );
+            },
+          ),
+
+          // Grid size indicator overlay
+          AnimatedBuilder(
+            animation: _overlayAnimationController,
+            builder: (context, child) {
+              return Opacity(
+                opacity: _overlayOpacityAnimation.value,
+                child: Transform.scale(
+                  scale: _overlayScaleAnimation.value,
+                  child: Center(
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                      decoration: BoxDecoration(
+                        color: Theme.of(context).colorScheme.inverseSurface,
+                        borderRadius: BorderRadius.circular(16),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withValues(alpha: 0.3),
+                            blurRadius: 12,
+                            offset: const Offset(0, 4),
+                          ),
+                        ],
+                      ),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            Icons.grid_view_rounded,
+                            size: 32,
+                            color: Theme.of(context).colorScheme.onInverseSurface,
+                          ),
+                          const SizedBox(height: 8),
+                          Text(
+                            '$_targetGridSize Columns',
+                            style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                              color: Theme.of(context).colorScheme.onInverseSurface,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          // Visual column indicator
+                          Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: List.generate(_targetGridSize, (i) {
+                              return Container(
+                                margin: const EdgeInsets.symmetric(horizontal: 2),
+                                width: 8,
+                                height: 8,
+                                decoration: BoxDecoration(
+                                  color: Theme.of(context).colorScheme.onInverseSurface.withValues(alpha: 0.5),
+                                  borderRadius: BorderRadius.circular(2),
+                                ),
+                              );
+                            }),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              );
+            },
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Animated search result tile that responds to grid size changes
+class _AnimatedSearchResultTile extends StatefulWidget {
+  final SearchResult result;
+  final int gridSize;
+  final VoidCallback onTap;
+
+  const _AnimatedSearchResultTile({
+    required this.result,
+    required this.gridSize,
+    required this.onTap,
+  });
+
+  @override
+  State<_AnimatedSearchResultTile> createState() => _AnimatedSearchResultTileState();
+}
+
+class _AnimatedSearchResultTileState extends State<_AnimatedSearchResultTile>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _controller;
+  late Animation<double> _scaleAnimation;
+  late Animation<double> _opacityAnimation;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      duration: const Duration(milliseconds: 300),
+      vsync: this,
+    );
+    _scaleAnimation = Tween<double>(begin: 0.95, end: 1.0).animate(
+      CurvedAnimation(parent: _controller, curve: Curves.easeOutCubic),
+    );
+    _opacityAnimation = Tween<double>(begin: 0.0, end: 1.0).animate(
+      CurvedAnimation(parent: _controller, curve: Curves.easeOutCubic),
+    );
+    _controller.forward();
+  }
+
+  @override
+  void didUpdateWidget(_AnimatedSearchResultTile oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // Trigger animation when grid size changes
+    if (oldWidget.gridSize != widget.gridSize) {
+      _controller.reset();
+      _controller.forward();
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ScaleTransition(
+      scale: _scaleAnimation,
+      child: FadeTransition(
+        opacity: _opacityAnimation,
+        child: _SearchResultTile(
+          result: widget.result,
+          onTap: widget.onTap,
         ),
       ),
     );
