@@ -1,26 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:shared_preferences/shared_preferences.dart';
+import '../di/providers.dart' as di_providers;
 import '../storage/storage_service.dart';
 import '../storage/secure_storage_service.dart';
-
-// Provider for raw SharedPreferences instance
-final sharedPreferencesProvider = Provider<SharedPreferences>((ref) {
-  throw UnimplementedError(
-    'Initialize SharedPreferences in main and override this provider',
-  );
-});
-
-// Provider for StorageService wrapping SharedPreferences
-final storageServiceProvider = Provider<StorageService>((ref) {
-  final prefs = ref.watch(sharedPreferencesProvider);
-  return StorageService(prefs);
-});
-
-// Provider for SecureStorageService
-final secureStorageServiceProvider = Provider<SecureStorageService>((ref) {
-  return SecureStorageService();
-});
 
 // Theme Mode Notifier and Provider
 class ThemeModeNotifier extends Notifier<ThemeMode> {
@@ -28,7 +10,7 @@ class ThemeModeNotifier extends Notifier<ThemeMode> {
 
   @override
   ThemeMode build() {
-    _storageService = ref.watch(storageServiceProvider);
+    _storageService = ref.watch(di_providers.storageServiceProvider);
     return _loadThemeMode();
   }
 
@@ -74,7 +56,7 @@ class AccentColorNotifier extends Notifier<Color> {
 
   @override
   Color build() {
-    _storageService = ref.watch(storageServiceProvider);
+    _storageService = ref.watch(di_providers.storageServiceProvider);
     return _loadAccentColor();
   }
 

@@ -4,6 +4,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../../ai/ai_manager.dart';
 import '../../ai/providers/embedding_provider.dart';
 import '../../ai/providers/local_embedding_provider.dart';
+import '../../ai/providers/local_object_detection_provider.dart';
+import '../../ai/providers/object_detection_provider.dart';
 import '../../features/indexing/services/image_scanner.dart';
 import '../../features/indexing/services/indexing_engine.dart';
 import '../../features/indexing/services/metadata_extractor.dart';
@@ -24,7 +26,7 @@ import '../storage/secure_storage_service.dart';
 import '../services/model_downloader.dart';
 import '../services/model_manager.dart';
 
-// Provider for raw SharedPreferences instance
+// Provider for raw SharedPreferences instance - initialized in main.dart
 final sharedPreferencesProvider = Provider<SharedPreferences>((ref) {
   throw UnimplementedError(
     'Initialize SharedPreferences in main and override this provider',
@@ -137,14 +139,16 @@ final aiManagerProvider = FutureProvider<AIManager>((ref) async {
   final db = await ref.watch(appDatabaseProvider.future);
   final logger = ref.watch(appLoggerProvider);
 
-  // Resolve the embedding provider from the future provider
+  // Resolve providers from future providers
   final embeddingProvider = await ref.watch(embeddingProviderProvider.future);
+  final objectDetectionProvider = await ref.watch(objectDetectionProviderProvider.future);
 
   return AIManagerImpl(
     jobQueue: jobQueue,
     secureStorage: secureStorage,
     settingsProvider: settingsRepo.getSettings,
     embeddingProvider: () => embeddingProvider,
+    objectDetectionProvider: () => objectDetectionProvider,
     photoRepository: photoRepo,
     database: db,
     logger: logger,
@@ -202,6 +206,28 @@ final modelManagerProvider = Provider<ModelManager>((ref) {
   final downloader = ref.watch(modelDownloaderProvider);
   final logger = ref.watch(appLoggerProvider);
   return ModelManager(downloader: downloader, logger: logger);
+});
+
+// ─────────────────────────────────────────────
+// AI Object Detection
+// ─────────────────────────────────────────────
+
+/// Object detection provider (local YOLO via ONNX).
+final objectDetectionProviderProvider = FutureProvider<ObjectDetectionProvider?>((ref) async {
+  final logger = ref.watch(appLoggerProvider);
+  final settings = ref.watch(userSettingsProvider);
+
+  if (settings.aiMode == AiMode.local) {
+    final modelManager = ref.watch(modelManagerProvider);
+    final provider = LocalObjectDetectionProvider(
+      logger: logger,
+      modelManager: modelManager,
+    );
+    await provider.initialize();
+    return provider;
+  }
+
+  return NullObjectDetectionProvider();
 });
 
 // ─────────────────────────────────────────────

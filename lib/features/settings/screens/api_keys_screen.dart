@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import '../../../core/theme/theme_providers.dart';
+import '../../../core/di/providers.dart' as di_providers;
 import '../providers/settings_providers.dart';
 
 class ApiKeysScreen extends ConsumerStatefulWidget {
@@ -33,7 +33,7 @@ class _ApiKeysScreenState extends ConsumerState<ApiKeysScreen> {
   }
 
   Future<void> _loadKeysStatus() async {
-    final secureStorage = ref.read(secureStorageServiceProvider);
+    final secureStorage = ref.read(di_providers.secureStorageServiceProvider);
     final openai = await secureStorage.getOpenAIKey();
     final vision = await secureStorage.getGoogleVisionKey();
     final anthropic = await secureStorage.getAnthropicKey();
@@ -114,7 +114,7 @@ class _ApiKeysScreenState extends ConsumerState<ApiKeysScreen> {
         return;
       }
 
-      final secureStorage = ref.read(secureStorageServiceProvider);
+      final secureStorage = ref.read(di_providers.secureStorageServiceProvider);
       if (provider == 'OpenAI') {
         await secureStorage.setOpenAIKey(result);
       } else if (provider == 'Google Vision') {
@@ -156,7 +156,7 @@ class _ApiKeysScreenState extends ConsumerState<ApiKeysScreen> {
     );
 
     if (confirm == true) {
-      final secureStorage = ref.read(secureStorageServiceProvider);
+      final secureStorage = ref.read(di_providers.secureStorageServiceProvider);
       if (provider == 'OpenAI') {
         await secureStorage.deleteOpenAIKey();
       } else if (provider == 'Google Vision') {

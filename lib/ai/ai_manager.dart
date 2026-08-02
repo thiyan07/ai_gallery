@@ -1,15 +1,17 @@
 import 'dart:typed_data';
 
+import '../ai/providers/embedding_provider.dart';
+import '../ai/providers/object_detection_provider.dart';
 import '../domain/models/ai_job.dart';
 import '../domain/models/user_settings.dart';
 import '../domain/models/face_detection.dart';
 import '../domain/models/object_detection.dart';
+import '../domain/models/object_detection_model.dart';
 import '../domain/models/ocr.dart';
 import '../domain/models/embedding.dart';
 import '../domain/models/image_analysis.dart';
 import '../core/jobs/background_job_queue.dart';
 import '../core/storage/secure_storage_service.dart';
-import '../ai/providers/embedding_provider.dart';
 import '../domain/repositories/photo_repository.dart';
 import '../core/database/app_database.dart';
 import '../core/logging/app_logger.dart';
@@ -42,6 +44,7 @@ class AIManagerImpl implements AIManager {
     required SecureStorageService secureStorage,
     required UserSettings Function() settingsProvider,
     required EmbeddingProvider? Function() embeddingProvider,
+    required ObjectDetectionProvider? Function()? objectDetectionProvider,
     required PhotoRepository photoRepository,
     required AppDatabase database,
     required AppLogger logger,
@@ -49,6 +52,7 @@ class AIManagerImpl implements AIManager {
         _secureStorage = secureStorage,
         _settingsProvider = settingsProvider,
         _embeddingProvider = embeddingProvider,
+        _objectDetectionProvider = objectDetectionProvider,
         _photoRepository = photoRepository,
         _database = database,
         _logger = logger;
@@ -57,6 +61,7 @@ class AIManagerImpl implements AIManager {
   final SecureStorageService _secureStorage;
   final UserSettings Function() _settingsProvider;
   final EmbeddingProvider? Function() _embeddingProvider;
+  final ObjectDetectionProvider? Function()? _objectDetectionProvider;
   final PhotoRepository _photoRepository;
   final AppDatabase _database;
   final AppLogger _logger;
@@ -182,7 +187,11 @@ class AIManagerImpl implements AIManager {
 
     await _jobQueue.updateJobStatus(job.id, progress: 0.3);
 
-    final objects = await _detectObjects(imageBytes);
+    // Use the object detection provider if available
+    final objProvider = _objectDetectionProvider?.call();
+    final objects = objProvider != null
+        ? (await objProvider.detectObjects(imageBytes)).detections
+        : <DetectedObject>[];
 
     await _jobQueue.updateJobStatus(job.id, progress: 0.7);
 
@@ -262,17 +271,20 @@ class AIManagerImpl implements AIManager {
     await _database.faces.insertFaces(records);
   }
 
-  Future<void> _saveObjectDetections(String photoId, List<ObjectDetection> objects) async {
-    final records = objects.asMap().entries.map((entry) => ObjectTagRecord(
-      id: '${photoId}_${entry.key}',
-      photoId: photoId,
-      label: entry.value.label,
-      confidence: entry.value.confidence,
-      boundingBoxLeft: entry.value.x,
-      boundingBoxTop: entry.value.y,
-      boundingBoxWidth: entry.value.width,
-      boundingBoxHeight: entry.value.height,
-    )).toList();
+  Future<void> _saveObjectDetections(String photoId, List<DetectedObject> objects) async {
+    final records = objects.asMap().entries.map((entry) {
+      final bbox = entry.value.boundingBox; // [cx, cy, w, h] normalized
+      return ObjectTagRecord(
+        id: '${photoId}_${entry.key}',
+        photoId: photoId,
+        label: entry.value.label,
+        confidence: entry.value.confidence,
+        boundingBoxLeft: (bbox[0] - bbox[2] / 2).clamp(0.0, 1.0),
+        boundingBoxTop: (bbox[1] - bbox[3] / 2).clamp(0.0, 1.0),
+        boundingBoxWidth: bbox[2].clamp(0.0, 1.0),
+        boundingBoxHeight: bbox[3].clamp(0.0, 1.0),
+      );
+    }).toList();
     await _database.objectTags.insertObjectTags(records);
   }
 

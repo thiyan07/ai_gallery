@@ -11,26 +11,35 @@ class ModelDownloader {
   final AppLogger _logger;
 
   /// Directory where models are stored.
-  late final Directory _modelsDir;
+  Directory? _modelsDir;
 
   /// Initialize the model directory.
   Future<void> initialize() async {
+    await _ensureInitialized();
+  }
+
+  /// Ensure the model directory is initialized.
+  Future<void> _ensureInitialized() async {
+    if (_modelsDir != null) return;
+
     final appDir = await getApplicationDocumentsDirectory();
     _modelsDir = Directory(path.join(appDir.path, 'models'));
-    if (!await _modelsDir.exists()) {
-      await _modelsDir.create(recursive: true);
-      _logger.info('Created models directory: ${_modelsDir.path}');
+    if (!await _modelsDir!.exists()) {
+      await _modelsDir!.create(recursive: true);
+      _logger.info('Created models directory: ${_modelsDir!.path}');
     }
   }
 
   /// Get the local path for a model.
-  String getModelPath(String modelId) {
-    return path.join(_modelsDir.path, '$modelId.onnx');
+  Future<String> getModelPath(String modelId) async {
+    await _ensureInitialized();
+    return path.join(_modelsDir!.path, '$modelId.onnx');
   }
 
   /// Check if a model is downloaded.
   Future<bool> isModelDownloaded(String modelId) async {
-    final file = File(getModelPath(modelId));
+    final localPath = await getModelPath(modelId);
+    final file = File(localPath);
     return file.existsSync();
   }
 
@@ -46,7 +55,8 @@ class ModelDownloader {
     String revision = 'main',
     void Function(double)? progressCallback,
   }) async {
-    final localPath = getModelPath(modelId.replaceAll('/', '_'));
+    await _ensureInitialized();
+    final localPath = await getModelPath(modelId.replaceAll('/', '_'));
 
     // Check if already exists
     if (await File(localPath).exists()) {
@@ -98,7 +108,8 @@ class ModelDownloader {
     required String modelName,
     void Function(double)? progressCallback,
   }) async {
-    final localPath = getModelPath(modelName);
+    await _ensureInitialized();
+    final localPath = await getModelPath(modelName);
 
     if (await File(localPath).exists()) {
       _logger.info('Model already exists: $localPath');
@@ -143,9 +154,10 @@ class ModelDownloader {
 
   /// List all downloaded models.
   Future<List<DownloadedModel>> listModels() async {
-    if (!await _modelsDir.exists()) return [];
+    await _ensureInitialized();
+    if (!await _modelsDir!.exists()) return [];
 
-    final files = _modelsDir.listSync().whereType<File>();
+    final files = _modelsDir!.listSync().whereType<File>();
     return files
         .where((f) => f.path.endsWith('.onnx'))
         .map((f) {
@@ -162,7 +174,8 @@ class ModelDownloader {
 
   /// Delete a downloaded model.
   Future<void> deleteModel(String modelName) async {
-    final file = File(getModelPath(modelName));
+    final localPath = await getModelPath(modelName);
+    final file = File(localPath);
     if (await file.exists()) {
       await file.delete();
       _logger.info('Deleted model: $modelName');
@@ -205,6 +218,7 @@ class DownloadedModel {
 /// Pre-configured model presets for common vision models.
 class ModelPresets {
   static const Map<String, ModelConfig> presets = {
+    // Embedding models
     'siglip-base-patch16-224': ModelConfig(
       modelId: 'google/siglip-base-patch16-224',
       filename: 'onnx/model.onnx',
@@ -239,6 +253,43 @@ class ModelPresets {
       description: 'MobileCLIP S2 - Better quality mobile',
       inputSize: 224,
       embeddingDim: 512,
+    ),
+
+    // Object detection models (YOLOv8)
+    'yolov8n': ModelConfig(
+      modelId: 'onnx/community/yolov8n',
+      filename: 'model.onnx',
+      description: 'YOLOv8 Nano - Fastest, ~6MB',
+      inputSize: 640,
+      embeddingDim: 0, // Not applicable for detection
+    ),
+    'yolov8s': ModelConfig(
+      modelId: 'onnx/community/yolov8s',
+      filename: 'model.onnx',
+      description: 'YOLOv8 Small - Balanced, ~22MB',
+      inputSize: 640,
+      embeddingDim: 0,
+    ),
+    'yolov8m': ModelConfig(
+      modelId: 'onnx/community/yolov8m',
+      filename: 'model.onnx',
+      description: 'YOLOv8 Medium - Better accuracy, ~52MB',
+      inputSize: 640,
+      embeddingDim: 0,
+    ),
+    'yolov8l': ModelConfig(
+      modelId: 'onnx/community/yolov8l',
+      filename: 'model.onnx',
+      description: 'YOLOv8 Large - Best accuracy, ~87MB',
+      inputSize: 640,
+      embeddingDim: 0,
+    ),
+    'yolov8x': ModelConfig(
+      modelId: 'onnx/community/yolov8x',
+      filename: 'model.onnx',
+      description: 'YOLOv8 Extra Large - Maximum accuracy, ~136MB',
+      inputSize: 640,
+      embeddingDim: 0,
     ),
   };
 }

@@ -32,7 +32,7 @@ class ModelManager {
     if (config == null) return null;
 
     if (await downloader.isModelDownloaded(config.localName)) {
-      return downloader.getModelPath(config.localName);
+      return await downloader.getModelPath(config.localName);
     }
 
     // Download the model

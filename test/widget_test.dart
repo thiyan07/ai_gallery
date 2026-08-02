@@ -3,7 +3,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:ai_gallery/main.dart';
-import 'package:ai_gallery/core/theme/theme_providers.dart' as theme_providers;
 import 'package:ai_gallery/core/di/providers.dart' as di_providers;
 import 'package:ai_gallery/core/storage/storage_service.dart';
 import 'package:ai_gallery/core/services/model_manager.dart';
@@ -26,9 +25,8 @@ void main() {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
-          // Providers used by main.dart (theme providers)
-          theme_providers.sharedPreferencesProvider.overrideWithValue(prefs),
-          theme_providers.storageServiceProvider.overrideWithValue(storageService),
+          // Providers used by main.dart (from di_providers)
+          di_providers.sharedPreferencesProvider.overrideWithValue(prefs),
           // Providers used by onboarding_provider.dart
           di_providers.storageServiceProvider.overrideWithValue(storageService),
           di_providers.modelManagerProvider.overrideWithValue(modelManager),
@@ -44,10 +42,12 @@ void main() {
 
     // Debug: print all texts found
     final allTexts = tester.widgetList(find.byType(Text));
+    // ignore: avoid_print
     print('Found ${allTexts.length} Text widgets');
     for (final widget in allTexts) {
       final textWidget = widget as Text;
       if (textWidget.data != null) {
+        // ignore: avoid_print
         print('  Text: "${textWidget.data}"');
       }
     }

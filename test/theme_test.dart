@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:ai_gallery/core/di/providers.dart' as di_providers;
 import 'package:ai_gallery/core/theme/theme_providers.dart';
 
 void main() {
@@ -22,7 +23,7 @@ void main() {
         await prefs.setString('settings_theme_mode', 'dark');
 
         final container = ProviderContainer(
-          overrides: [sharedPreferencesProvider.overrideWithValue(prefs)],
+          overrides: [di_providers.sharedPreferencesProvider.overrideWithValue(prefs)],
         );
         addTearDown(container.dispose);
 
@@ -34,7 +35,7 @@ void main() {
 
     test('ThemeModeNotifier saves changes to SharedPreferences', () async {
       final container = ProviderContainer(
-        overrides: [sharedPreferencesProvider.overrideWithValue(prefs)],
+        overrides: [di_providers.sharedPreferencesProvider.overrideWithValue(prefs)],
       );
       addTearDown(container.dispose);
 
@@ -55,7 +56,7 @@ void main() {
       await prefs.setInt('settings_accent_color', customColor.toARGB32());
 
       final container = ProviderContainer(
-        overrides: [sharedPreferencesProvider.overrideWithValue(prefs)],
+        overrides: [di_providers.sharedPreferencesProvider.overrideWithValue(prefs)],
       );
       addTearDown(container.dispose);
 

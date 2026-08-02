@@ -7,12 +7,12 @@ import 'package:ai_gallery/core/services/model_downloader.dart';
 class TelemetryNotifier extends Notifier<bool> {
   @override
   bool build() {
-    return ref.watch(storageServiceProvider).isTelemetryEnabled();
+    return ref.watch(di_providers.storageServiceProvider).isTelemetryEnabled();
   }
 
   Future<void> toggle(bool val) async {
     state = val;
-    await ref.read(storageServiceProvider).setTelemetryEnabled(val);
+    await ref.read(di_providers.storageServiceProvider).setTelemetryEnabled(val);
   }
 }
 
@@ -22,12 +22,12 @@ final telemetryEnabledProvider = NotifierProvider<TelemetryNotifier, bool>(Telem
 class CloudBackupNotifier extends Notifier<bool> {
   @override
   bool build() {
-    return ref.watch(storageServiceProvider).isCloudBackupEnabled();
+    return ref.watch(di_providers.storageServiceProvider).isCloudBackupEnabled();
   }
 
   Future<void> setEnabled(bool val) async {
     state = val;
-    await ref.read(storageServiceProvider).setCloudBackupEnabled(val);
+    await ref.read(di_providers.storageServiceProvider).setCloudBackupEnabled(val);
   }
 }
 
@@ -37,12 +37,12 @@ final cloudBackupEnabledProvider = NotifierProvider<CloudBackupNotifier, bool>(C
 class SyncWifiOnlyNotifier extends Notifier<bool> {
   @override
   bool build() {
-    return ref.watch(storageServiceProvider).isSyncWifiOnly();
+    return ref.watch(di_providers.storageServiceProvider).isSyncWifiOnly();
   }
 
   Future<void> toggle(bool val) async {
     state = val;
-    await ref.read(storageServiceProvider).setSyncWifiOnly(val);
+    await ref.read(di_providers.storageServiceProvider).setSyncWifiOnly(val);
   }
 }
 
@@ -52,12 +52,12 @@ final syncWifiOnlyProvider = NotifierProvider<SyncWifiOnlyNotifier, bool>(SyncWi
 class SyncFrequencyNotifier extends Notifier<String> {
   @override
   String build() {
-    return ref.watch(storageServiceProvider).getSyncFrequency();
+    return ref.watch(di_providers.storageServiceProvider).getSyncFrequency();
   }
 
   Future<void> setFrequency(String val) async {
     state = val;
-    await ref.read(storageServiceProvider).setSyncFrequency(val);
+    await ref.read(di_providers.storageServiceProvider).setSyncFrequency(val);
   }
 }
 

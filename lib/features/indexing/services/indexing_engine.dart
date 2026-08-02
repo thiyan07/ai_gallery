@@ -158,6 +158,16 @@ class IndexingEngine {
 
       await _enqueueEmbeddingJobs(photosToIndex);
     }
+
+    // Phase 4: Object detection
+    if (!_isCancelled && photosToIndex.isNotEmpty) {
+      _emitStatus(_currentStatus.copyWith(
+        currentPhase: IndexingPhase.detectingObjects,
+        processedPhotos: 0,
+      ));
+
+      await _enqueueObjectDetectionJobs(photosToIndex);
+    }
   }
 
   /// Enqueue AI embedding jobs for all photos.
@@ -201,6 +211,47 @@ class IndexingEngine {
     await _waitForEmbeddingJobs(photos);
   }
 
+  /// Enqueue object detection jobs for all photos.
+  Future<void> _enqueueObjectDetectionJobs(List<Photo> photos) async {
+    for (var i = 0; i < photos.length; i++) {
+      if (_isCancelled) return;
+
+      while (_isPaused) {
+        await Future.delayed(const Duration(milliseconds: 100));
+        if (_isCancelled) return;
+      }
+
+      final photo = photos[i];
+
+      // Check if object tags already exist
+      final existingTags = await _db.objectTags.getObjectTagsByPhotoId(photo.id);
+      if (existingTags.isNotEmpty) {
+        _emitStatus(_currentStatus.copyWith(processedPhotos: i + 1));
+        continue;
+      }
+
+      // Enqueue object detection job
+      final job = AIJob(
+        id: 'object_detection_${photo.id}_${DateTime.now().millisecondsSinceEpoch}',
+        photoId: photo.id,
+        type: AIJobType.objectTagging,
+        status: AIJobStatus.pending,
+        createdAt: DateTime.now(),
+      );
+
+      try {
+        await _aiManager.enqueue(job);
+      } catch (e, st) {
+        _logger.error('Failed to enqueue object detection job for ${photo.id}', error: e, stackTrace: st);
+      }
+
+      _emitStatus(_currentStatus.copyWith(processedPhotos: i + 1));
+    }
+
+    // Wait for object detection jobs to complete (with timeout)
+    await _waitForObjectDetectionJobs(photos);
+  }
+
   /// Wait for embedding jobs to complete.
   Future<void> _waitForEmbeddingJobs(List<Photo> photos) async {
     const maxWaitSeconds = 300; // 5 minutes max
@@ -229,6 +280,37 @@ class IndexingEngine {
 
     if (waitedSeconds >= maxWaitSeconds) {
       _logger.warning('Timeout waiting for embedding jobs to complete');
+    }
+  }
+
+  /// Wait for object detection jobs to complete.
+  Future<void> _waitForObjectDetectionJobs(List<Photo> photos) async {
+    const maxWaitSeconds = 300; // 5 minutes max
+    const checkInterval = Duration(seconds: 5);
+    int waitedSeconds = 0;
+
+    while (waitedSeconds < maxWaitSeconds) {
+      if (_isCancelled) return;
+
+      int completedCount = 0;
+      for (final photo in photos) {
+        final tags = await _db.objectTags.getObjectTagsByPhotoId(photo.id);
+        if (tags.isNotEmpty) {
+          completedCount++;
+        }
+      }
+
+      if (completedCount >= photos.length) {
+        _logger.info('All $completedCount object detection jobs completed');
+        break;
+      }
+
+      await Future.delayed(checkInterval);
+      waitedSeconds += checkInterval.inSeconds;
+    }
+
+    if (waitedSeconds >= maxWaitSeconds) {
+      _logger.warning('Timeout waiting for object detection jobs to complete');
     }
   }
 

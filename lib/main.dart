@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'core/di/providers.dart' as di_providers;
 import 'core/theme/app_theme.dart';
 import 'core/theme/theme_providers.dart';
 import 'features/onboarding/providers/onboarding_provider.dart';
@@ -77,8 +78,8 @@ void main() async {
   runApp(
     ProviderScope(
       overrides: [
-        // Inject pre-loaded SharedPreferences into the provider
-        sharedPreferencesProvider.overrideWithValue(prefs),
+        // Inject pre-loaded SharedPreferences into the provider from di_providers
+        di_providers.sharedPreferencesProvider.overrideWithValue(prefs),
       ],
       child: const AIGalleryApp(),
     ),
