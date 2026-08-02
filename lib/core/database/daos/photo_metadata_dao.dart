@@ -76,6 +76,9 @@ class PhotoMetadataDao {
         'blur_score': metadata.blurScore,
         'quality_score': metadata.qualityScore,
         'indexed_at': metadata.indexedAt.toIso8601String(),
+        'album_id': metadata.albumId,
+        'folder_path': metadata.folderPath,
+        'media_type': metadata.mediaType,
       };
 
   PhotoMetadata _fromRow(Map<String, Object?> row) {
@@ -106,6 +109,9 @@ class PhotoMetadataDao {
       blurScore: row['blur_score'] as double?,
       qualityScore: row['quality_score'] as double?,
       indexedAt: DateTime.parse(row['indexed_at'] as String),
+      albumId: row['album_id'] as String?,
+      folderPath: row['folder_path'] as String?,
+      mediaType: row['media_type'] as String?,
     );
   }
 }

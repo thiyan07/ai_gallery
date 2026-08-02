@@ -18,6 +18,7 @@ import '../../domain/repositories/favorites_repository.dart';
 import '../../domain/repositories/photo_repository.dart';
 import '../../domain/repositories/settings_repository.dart';
 import '../../domain/models/user_settings.dart';
+import '../../domain/models/ai_job.dart';
 import '../database/app_database.dart';
 import '../jobs/background_job_queue.dart';
 import '../logging/app_logger.dart';
@@ -102,6 +103,20 @@ final backgroundJobQueueProvider =
   final db = await ref.watch(appDatabaseProvider.future);
   final logger = ref.watch(appLoggerProvider);
   return BackgroundJobQueue(database: db, logger: logger);
+});
+
+/// Provider for pending AI jobs.
+final pendingJobsProvider = FutureProvider<List<AIJob>>((ref) async {
+  final jobQueue = await ref.watch(backgroundJobQueueProvider.future);
+  final jobs = await jobQueue.getAllJobs();
+  return jobs.where((j) => j.status == AIJobStatus.pending).toList();
+});
+
+/// Provider for failed AI jobs.
+final failedJobsProvider = FutureProvider<List<AIJob>>((ref) async {
+  final jobQueue = await ref.watch(backgroundJobQueueProvider.future);
+  final jobs = await jobQueue.getAllJobs();
+  return jobs.where((j) => j.status == AIJobStatus.failed).toList();
 });
 
 /// Current user settings from the repository.

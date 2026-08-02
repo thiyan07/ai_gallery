@@ -310,7 +310,7 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
     );
   }
 
-  Widget _buildResultsGrid(ThemeData theme, List<SearchResult> results) {
+  Widget _buildResultsGrid(ThemeData theme, List<RankedSearchResult> results) {
     final gridSize = ref.watch(gridSizeProvider);
     return _SearchResultsGrid(
       results: results,
@@ -447,7 +447,7 @@ class _SearchResultTile extends StatelessWidget {
     required this.onTap,
   });
 
-  final SearchResult result;
+  final RankedSearchResult result;
   final VoidCallback onTap;
 
   @override
@@ -513,9 +513,9 @@ class _SearchResultTile extends StatelessWidget {
 // ─────────────────────────────────────────────
 
 class _SearchResultsGrid extends ConsumerStatefulWidget {
-  final List<SearchResult> results;
+  final List<RankedSearchResult> results;
   final int gridSize;
-  final void Function(SearchResult) onTap;
+  final void Function(RankedSearchResult) onTap;
 
   const _SearchResultsGrid({
     required this.results,
@@ -761,7 +761,7 @@ class _SearchResultsGridState extends ConsumerState<_SearchResultsGrid>
 
 /// Animated search result tile that responds to grid size changes
 class _AnimatedSearchResultTile extends StatefulWidget {
-  final SearchResult result;
+  final RankedSearchResult result;
   final int gridSize;
   final VoidCallback onTap;
 

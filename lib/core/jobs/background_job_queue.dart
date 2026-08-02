@@ -73,6 +73,9 @@ class BackgroundJobQueue {
   /// Returns all pending jobs.
   Future<List<AIJob>> getPendingJobs() => _dao.getByStatus(AIJobStatus.pending);
 
+  /// Returns all jobs regardless of status.
+  Future<List<AIJob>> getAllJobs() => _dao.getAll();
+
   /// Cancels a pending job.
   Future<void> cancel(String jobId) async {
     final job = await _dao.getById(jobId);

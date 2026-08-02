@@ -17,7 +17,7 @@ class AppDatabase {
 
   static AppDatabase? _instance;
   static const _dbName = 'ai_gallery.db';
-  static const _dbVersion = 3;
+  static const _dbVersion = 4;
 
   final Database _db;
 
@@ -71,6 +71,9 @@ class AppDatabase {
       await _createPhotoMetadataTable(db);
       await _createIndexStatusTable(db);
     }
+    if (version >= 4) {
+      await _createPhotoUsageTable(db);
+    }
   }
 
   static Future<void> _onUpgrade(
@@ -84,6 +87,9 @@ class AppDatabase {
     if (oldVersion < 3) {
       await _createPhotoMetadataTable(db);
       await _createIndexStatusTable(db);
+    }
+    if (oldVersion < 4) {
+      await _createPhotoUsageTable(db);
     }
   }
 
@@ -181,7 +187,23 @@ class AppDatabase {
         contrast REAL,
         blur_score REAL,
         quality_score REAL,
-        indexed_at TEXT NOT NULL
+        indexed_at TEXT NOT NULL,
+        album_id TEXT,
+        folder_path TEXT,
+        media_type TEXT
+      )
+    ''');
+  }
+
+  static Future<void> _createPhotoUsageTable(Database db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS photo_usage (
+        photo_id TEXT PRIMARY KEY,
+        view_count INTEGER NOT NULL DEFAULT 0,
+        last_viewed_at TEXT,
+        edited_at TEXT,
+        shared_at TEXT,
+        FOREIGN KEY (photo_id) REFERENCES photo_metadata(photo_id) ON DELETE CASCADE
       )
     ''');
   }

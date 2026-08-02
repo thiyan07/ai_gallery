@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:ai_gallery/ai/providers/embedding_provider.dart';
 import 'package:ai_gallery/ai/providers/local_embedding_provider.dart';
@@ -6,13 +8,17 @@ import 'package:ai_gallery/core/logging/app_logger.dart';
 import 'package:ai_gallery/domain/models/user_settings.dart';
 import 'package:ai_gallery/features/search/services/search_service.dart';
 import 'package:ai_gallery/features/search/services/natural_language_parser.dart';
+import 'package:ai_gallery/features/search/services/ranking_engine.dart';
+import 'package:ai_gallery/features/search/services/search_suggestion_service.dart';
 
 // ─────────────────────────────────────────────
 // Re-export types from search_service
 // ─────────────────────────────────────────────
 
-export '../services/search_service.dart' show SearchResult, SearchFilters;
+export '../services/search_service.dart' show SearchResult, SearchFilters, RankingContext;
 export '../services/natural_language_parser.dart' show ParsedQuery, NaturalLanguageParser;
+export '../services/ranking_engine.dart' show RankingEngine, RankedSearchResult, RankingContext;
+export '../services/search_suggestion_service.dart' show SearchSuggestionService, SearchSuggestion, SuggestionType;
 
 // ─────────────────────────────────────────────
 // Natural Language Parser Provider
@@ -39,6 +45,31 @@ final parsedQueryProvider = FutureProvider<ParsedQuery>((ref) async {
   }
 
   return parser.parse(query);
+});
+
+// ─────────────────────────────────────────────
+// Ranking Engine Provider
+// ─────────────────────────────────────────────
+
+/// Ranking engine for combining search signals.
+final rankingEngineProvider = Provider<RankingEngine>((ref) {
+  final database = ref.watch(appDatabaseProvider).requireValue;
+  final logger = ref.watch(appLoggerProvider);
+  return RankingEngine(database: database, logger: logger);
+});
+
+// ─────────────────────────────────────────────
+// Search Suggestion Service Provider
+// ─────────────────────────────────────────────
+
+/// Search suggestion service for recent/popular/autocomplete suggestions.
+final searchSuggestionServiceProvider = Provider<SearchSuggestionService>((ref) {
+  final database = ref.watch(appDatabaseProvider).requireValue;
+  final logger = ref.watch(appLoggerProvider);
+  final service = SearchSuggestionService(database: database, logger: logger);
+  // Initialize the table asynchronously
+  unawaited(service.initialize());
+  return service;
 });
 
 // ─────────────────────────────────────────────
@@ -78,10 +109,14 @@ final embeddingProviderProvider = FutureProvider<EmbeddingProvider?>((ref) async
 final searchServiceProvider = Provider<SearchService>((ref) {
   final embeddingProvider = ref.watch(embeddingProviderProvider).requireValue;
   final database = ref.watch(appDatabaseProvider).requireValue;
+  final rankingEngine = ref.watch(rankingEngineProvider);
+  final suggestionService = ref.watch(searchSuggestionServiceProvider);
 
   return SearchService(
     embeddingProvider: embeddingProvider!,
     database: database,
+    rankingEngine: rankingEngine,
+    suggestionService: suggestionService,
   );
 });
 
@@ -111,7 +146,7 @@ class SearchQueryNotifier extends Notifier<String> {
 
 /// Search results stream using natural language parsing.
 /// This watches the parsed query provider and uses the semantic query + filters for search.
-final searchResultsProvider = FutureProvider<List<SearchResult>>((ref) async {
+final searchResultsProvider = FutureProvider<List<RankedSearchResult>>((ref) async {
   // Watch the parsed query which includes both semantic query and extracted filters
   final parsedQueryAsync = ref.watch(parsedQueryProvider);
 
@@ -120,7 +155,7 @@ final searchResultsProvider = FutureProvider<List<SearchResult>>((ref) async {
       if (parsedQuery.semanticQuery.trim().isEmpty) return [];
 
       final searchService = ref.watch(searchServiceProvider);
-      // Use the new searchParsed method that handles semantic query + filters
+      // Use the new searchParsed method that handles semantic query + filters + ranking
       return searchService.searchParsed(parsedQuery, limit: 20);
     },
     loading: () => [],
@@ -145,12 +180,45 @@ class SearchFiltersNotifier extends Notifier<SearchFilters> {
     state = state.copyWith(minQualityScore: quality);
   }
 
+  void setMaxBlur(double? blur) {
+    state = state.copyWith(maxBlurScore: blur);
+  }
+
   void setDateRange(DateTime? from, DateTime? to) {
     state = state.copyWith(dateFrom: from, dateTo: to);
   }
 
   void setHasLocation(bool hasLocation) {
     state = state.copyWith(hasLocation: hasLocation);
+  }
+
+  void setAlbumId(String? albumId) {
+    state = state.copyWith(albumId: albumId);
+  }
+
+  void setFolderPath(String? folderPath) {
+    state = state.copyWith(folderPath: folderPath);
+  }
+
+  void setMediaType(String? mediaType) {
+    state = state.copyWith(mediaType: mediaType);
+  }
+
+  void setOrientation(int? orientation) {
+    state = state.copyWith(orientation: orientation);
+  }
+
+  void setFavoritesOnly(bool favoritesOnly) {
+    state = state.copyWith(favoritesOnly: favoritesOnly);
+  }
+
+  void setDimensions({int? minWidth, int? maxWidth, int? minHeight, int? maxHeight}) {
+    state = state.copyWith(
+      minWidth: minWidth,
+      maxWidth: maxWidth,
+      minHeight: minHeight,
+      maxHeight: maxHeight,
+    );
   }
 
   void clear() {

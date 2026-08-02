@@ -51,6 +51,12 @@ class AiJobDao {
     return rows.map(_fromRow).toList();
   }
 
+  /// Returns all jobs regardless of status.
+  Future<List<AIJob>> getAll() async {
+    final rows = await _db.query('ai_jobs', orderBy: 'created_at DESC');
+    return rows.map(_fromRow).toList();
+  }
+
   Map<String, Object?> _toRow(AIJob job) => {
         'id': job.id,
         'type': job.type.name,

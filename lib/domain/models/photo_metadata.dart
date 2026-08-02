@@ -66,6 +66,15 @@ class PhotoMetadata {
   /// When this metadata was last indexed.
   final DateTime indexedAt;
 
+  /// Album ID this photo belongs to.
+  final String? albumId;
+
+  /// Folder path this photo is located in.
+  final String? folderPath;
+
+  /// Media type (e.g., 'image', 'video').
+  final String? mediaType;
+
   const PhotoMetadata({
     required this.photoId,
     required this.width,
@@ -89,6 +98,9 @@ class PhotoMetadata {
     this.blurScore,
     this.qualityScore,
     required this.indexedAt,
+    this.albumId,
+    this.folderPath,
+    this.mediaType,
   });
 
   PhotoMetadata copyWith({
@@ -114,6 +126,9 @@ class PhotoMetadata {
     double? blurScore,
     double? qualityScore,
     DateTime? indexedAt,
+    String? albumId,
+    String? folderPath,
+    String? mediaType,
   }) {
     return PhotoMetadata(
       photoId: photoId ?? this.photoId,
@@ -138,6 +153,44 @@ class PhotoMetadata {
       blurScore: blurScore ?? this.blurScore,
       qualityScore: qualityScore ?? this.qualityScore,
       indexedAt: indexedAt ?? this.indexedAt,
+      albumId: albumId ?? this.albumId,
+      folderPath: folderPath ?? this.folderPath,
+      mediaType: mediaType ?? this.mediaType,
+    );
+  }
+
+  /// Creates a PhotoMetadata from a database row map.
+  static PhotoMetadata fromMap(Map<String, Object?> row) {
+    return PhotoMetadata(
+      photoId: row['photo_id'] as String,
+      width: row['width'] as int,
+      height: row['height'] as int,
+      fileSizeBytes: row['file_size_bytes'] as int,
+      mimeType: row['mime_type'] as String?,
+      dateCreated: row['date_created'] != null
+          ? DateTime.parse(row['date_created'] as String)
+          : null,
+      dateModified: row['date_modified'] != null
+          ? DateTime.parse(row['date_modified'] as String)
+          : null,
+      cameraMake: row['camera_make'] as String?,
+      cameraModel: row['camera_model'] as String?,
+      iso: row['iso'] as int?,
+      shutterSpeed: row['shutter_speed'] as double?,
+      aperture: row['aperture'] as double?,
+      latitude: row['latitude'] as double?,
+      longitude: row['longitude'] as double?,
+      orientation: row['orientation'] as int,
+      dominantColor: row['dominant_color'] as int?,
+      averageColor: row['average_color'] as int?,
+      brightness: row['brightness'] as double?,
+      contrast: row['contrast'] as double?,
+      blurScore: row['blur_score'] as double?,
+      qualityScore: row['quality_score'] as double?,
+      indexedAt: DateTime.parse(row['indexed_at'] as String),
+      albumId: row['album_id'] as String?,
+      folderPath: row['folder_path'] as String?,
+      mediaType: row['media_type'] as String?,
     );
   }
 }
