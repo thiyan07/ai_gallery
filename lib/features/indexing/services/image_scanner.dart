@@ -65,9 +65,9 @@ class ImageScanner {
             // Check if photo has been modified since last index
             final existingMeta = await _metadataDao.getById(photo.id);
             if (existingMeta != null) {
-              final assetModified = asset.modifiedDateTime;
-              if (assetModified != null &&
-                  existingMeta.dateModified != null &&
+              final DateTime? assetModified = asset.modifiedDateTime;
+              if (existingMeta.dateModified != null &&
+                  assetModified != null &&
                   assetModified.isAfter(existingMeta.dateModified!)) {
                 modifiedPhotos.add(photo);
               }

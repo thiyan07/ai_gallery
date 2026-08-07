@@ -62,6 +62,35 @@ class AppDatabase {
     _instance = null;
   }
 
+  /// Opens a new database connection for use in a background isolate.
+  /// This creates a separate connection that won't conflict with the main isolate's singleton.
+  static Future<AppDatabase> openForIsolate({
+    required String databasePath,
+    AppLogger? logger,
+  }) async {
+    try {
+      final db = await openDatabase(
+        databasePath,
+        version: _dbVersion,
+        onCreate: _onCreate,
+        onUpgrade: _onUpgrade,
+      );
+      logger?.info('AppDatabase opened for isolate at $databasePath');
+      return AppDatabase._(db);
+    } catch (e, st) {
+      logger?.error('Failed to open AppDatabase for isolate', error: e, stackTrace: st);
+      throw app_exceptions.DatabaseException(
+        'Failed to open database for isolate',
+        cause: e,
+      );
+    }
+  }
+
+  /// Closes the database connection for this instance (used in isolates).
+  Future<void> dispose() async {
+    await _db.close();
+  }
+
   static Future<void> _onCreate(Database db, int version) async {
     await _createFavoritesTable(db);
     if (version >= 2) {

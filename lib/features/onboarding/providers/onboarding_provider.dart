@@ -2,7 +2,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:photo_manager/photo_manager.dart';
 
 import '../../../core/di/providers.dart' as di_providers;
-import '../../../core/theme/theme_providers.dart' as theme_providers;
 
 class OnboardingState {
   final int currentStep;

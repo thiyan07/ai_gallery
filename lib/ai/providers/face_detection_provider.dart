@@ -1,9 +1,9 @@
 import 'dart:typed_data';
 
-import '../../domain/models/object_detection_model.dart';
+import '../../domain/models/face_detection.dart';
 
-/// Abstract provider for object detection.
-abstract class ObjectDetectionProvider {
+/// Abstract provider for face detection.
+abstract class FaceDetectionProvider {
   /// Unique identifier for this provider.
   String get id;
 
@@ -13,13 +13,11 @@ abstract class ObjectDetectionProvider {
   /// Whether this provider is available (e.g., model loaded).
   Future<bool> get isAvailable;
 
-  /// Detect objects in the given image bytes.
+  /// Detect faces in the given image bytes.
   ///
-  /// Returns ObjectDetectionResult containing all detections with metadata.
-  Future<ObjectDetectionResult> detectObjects(Uint8List imageBytes);
-
-  /// Get the list of class labels this model can detect.
-  List<String> get labels;
+  /// Returns a list of FaceDetection objects containing bounding boxes,
+  /// keypoints, and confidence scores.
+  Future<List<FaceDetection>> detectFaces(Uint8List imageBytes);
 
   /// Initialize the provider (load model).
   Future<void> initialize();
@@ -32,7 +30,7 @@ abstract class ObjectDetectionProvider {
 }
 
 /// Fallback provider that returns empty results (when no model is available).
-class NullObjectDetectionProvider implements ObjectDetectionProvider {
+class NullFaceDetectionProvider implements FaceDetectionProvider {
   @override
   String get id => 'null';
 
@@ -43,16 +41,8 @@ class NullObjectDetectionProvider implements ObjectDetectionProvider {
   Future<bool> get isAvailable => Future.value(true);
 
   @override
-  List<String> get labels => [];
-
-  @override
-  Future<ObjectDetectionResult> detectObjects(Uint8List imageBytes) async =>
-      ObjectDetectionResult(
-        detections: [],
-        imageWidth: 0,
-        imageHeight: 0,
-        inferenceTimeMs: 0,
-      );
+  Future<List<FaceDetection>> detectFaces(Uint8List imageBytes) async =>
+      <FaceDetection>[];
 
   @override
   Future<void> initialize() async {}

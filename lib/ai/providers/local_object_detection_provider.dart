@@ -10,7 +10,6 @@ import 'package:onnxruntime/onnxruntime.dart';
 import '../../core/logging/app_logger.dart';
 import '../../core/services/model_manager.dart';
 import '../../core/utils/device_capabilities.dart';
-import '../../domain/models/object_detection.dart';
 import '../../domain/models/object_detection_model.dart';
 import 'object_detection_provider.dart';
 
@@ -166,8 +165,8 @@ class LocalObjectDetectionProvider implements ObjectDetectionProvider {
 
   /// Determine the YOLO model preset to use.
   String _determinePreset() {
-    if (_forcedPreset != null) return _forcedPreset!;
-    if (_forcedTier != null) return _presetForTier(_forcedTier!);
+    if (_forcedPreset != null) return _forcedPreset;
+    if (_forcedTier != null) return _presetForTier(_forcedTier);
     return _capabilities?.recommendedModelPreset ?? 'yolov8n';
   }
 
@@ -183,7 +182,7 @@ class LocalObjectDetectionProvider implements ObjectDetectionProvider {
 
   /// Determine input size for the current model.
   int _determineInputSize() {
-    if (_inputSize != null) return _inputSize!;
+    if (_inputSize != null) return _inputSize;
     // YOLOmodels typically use 640x640
     return 640;
   }

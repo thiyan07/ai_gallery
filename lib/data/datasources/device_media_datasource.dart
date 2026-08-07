@@ -4,6 +4,8 @@ import 'package:photo_manager/photo_manager.dart';
 
 import '../../core/errors/app_exception.dart';
 import '../../core/logging/app_logger.dart';
+import 'package:photo_manager/src/filter/classical/filter_option_group.dart';
+import 'package:photo_manager/src/filter/classical/filter_options.dart';
 
 /// Data source for device media library access via photo_manager.
 class DeviceMediaDataSource {
@@ -48,13 +50,49 @@ class DeviceMediaDataSource {
     return PhotoManager.getAssetPathList(type: type, onlyAll: false);
   }
 
-  /// Loads photo assets from a given album with pagination.
+  /// Loads all albums with sorting by creation date (most recent first).
+  Future<List<AssetPathEntity>> getAlbumsSortedByDate({
+    RequestType type = RequestType.image,
+    bool ascending = false,
+  }) {
+    final filterOption = FilterOptionGroup(
+      orders: [
+        OrderOption(
+          type: OrderOptionType.createDate,
+          asc: ascending,
+        ),
+      ],
+    );
+    return PhotoManager.getAssetPathList(
+      type: type,
+      onlyAll: false,
+      filterOption: filterOption,
+    );
+  }
+
+  /// Loads photo assets from a given album with pagination, sorted by creation date.
   Future<List<AssetEntity>> getPhotos(
     AssetPathEntity album, {
     int page = 0,
     int pageSize = 80,
-  }) {
-    return album.getAssetListPaged(page: page, size: pageSize);
+  }) async {
+    // Sort by creation date descending (most recent first)
+    final filterOption = FilterOptionGroup(
+      orders: [
+        OrderOption(
+          type: OrderOptionType.createDate,
+          asc: false,
+        ),
+      ],
+    );
+    // Recreate the album with the filter option to apply sorting
+    final albumWithFilter = await AssetPathEntity.fromId(
+      album.id,
+      filterOption: filterOption,
+      type: album.type,
+      albumType: album.albumType,
+    );
+    return albumWithFilter.getAssetListPaged(page: page, size: pageSize);
   }
 
   /// Resolves an album path by id.
@@ -83,5 +121,17 @@ class DeviceMediaDataSource {
     final asset = await AssetEntity.fromId(assetId);
     if (asset == null) return null;
     return asset.originBytes;
+  }
+
+  /// Fetches multiple assets by their IDs.
+  Future<List<AssetEntity>> getAssetsByIds(List<String> ids) async {
+    final assets = <AssetEntity>[];
+    for (final id in ids) {
+      final asset = await AssetEntity.fromId(id);
+      if (asset != null) {
+        assets.add(asset);
+      }
+    }
+    return assets;
   }
 }

@@ -1,3 +1,5 @@
+import 'dart:math';
+
 /// Object detection result with full bounding box and metadata.
 class ObjectDetectionResult {
   const ObjectDetectionResult({
@@ -78,6 +80,38 @@ class DetectedObject {
       (cx + w / 2).clamp(0.0, 1.0),
       (cy + h / 2).clamp(0.0, 1.0),
     ];
+  }
+
+  /// Create from Google Vision API localizedObjectAnnotations format.
+  factory DetectedObject.fromJson(Map<String, dynamic> json) {
+    final mid = json['mid'] as String?;
+    final name = json['name'] as String? ?? mid ?? 'Unknown';
+    final score = (json['score'] as num? ?? 0.0).toDouble();
+    final boundingPoly = json['boundingPoly'] as Map<String, dynamic>?;
+    List<double> bbox = [0.5, 0.5, 1.0, 1.0]; // Default: full image
+    if (boundingPoly != null) {
+      final vertices = boundingPoly['normalizedVertices'] as List?;
+      if (vertices != null && vertices.length == 4) {
+        // Convert from 4 vertices to [cx, cy, w, h]
+        final xs = vertices.map((v) => (v['x'] as num? ?? 0.0).toDouble()).toList();
+        final ys = vertices.map((v) => (v['y'] as num? ?? 0.0).toDouble()).toList();
+        final minX = xs.reduce(min);
+        final maxX = xs.reduce(max);
+        final minY = ys.reduce(min);
+        final maxY = ys.reduce(max);
+        final cx = (minX + maxX) / 2;
+        final cy = (minY + maxY) / 2;
+        final w = maxX - minX;
+        final h = maxY - minY;
+        bbox = [cx.clamp(0.0, 1.0), cy.clamp(0.0, 1.0), w.clamp(0.0, 1.0), h.clamp(0.0, 1.0)];
+      }
+    }
+    return DetectedObject(
+      label: name,
+      confidence: score,
+      boundingBox: bbox,
+      classIndex: null,
+    );
   }
 }
 

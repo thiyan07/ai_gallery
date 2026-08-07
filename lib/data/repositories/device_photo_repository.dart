@@ -74,4 +74,7 @@ class DevicePhotoRepository implements PhotoRepository {
 
   @override
   Future<Uint8List?> getImageBytes(String assetId) => _dataSource.getBytes(assetId);
+
+  @override
+  Future<List<AssetEntity>> getAssetsByIds(List<String> ids) => _dataSource.getAssetsByIds(ids);
 }

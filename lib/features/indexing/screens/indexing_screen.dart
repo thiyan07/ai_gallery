@@ -5,7 +5,6 @@ import 'package:sqflite/sqflite.dart';
 import '../../../../core/database/app_database.dart';
 import '../../../../core/di/providers.dart';
 import '../../../../domain/models/index_status.dart';
-import '../../../../core/jobs/background_job_queue.dart';
 import '../../../../domain/models/ai_job.dart';
 
 class IndexingScreen extends ConsumerWidget {
@@ -321,6 +320,8 @@ class _JobStatusSection extends ConsumerWidget {
         return 'OCR';
       case AIJobType.caption:
         return 'Captions';
+      case AIJobType.faceEmbedding:
+        return 'Face Embeddings';
     }
   }
 }

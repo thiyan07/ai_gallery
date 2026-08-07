@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../di/providers.dart' as di_providers;
 import '../storage/storage_service.dart';
-import '../storage/secure_storage_service.dart';
 
 // Theme Mode Notifier and Provider
 class ThemeModeNotifier extends Notifier<ThemeMode> {
@@ -16,32 +15,20 @@ class ThemeModeNotifier extends Notifier<ThemeMode> {
 
   ThemeMode _loadThemeMode() {
     final modeString = _storageService.getThemeMode();
-    switch (modeString) {
-      case 'light':
-        return ThemeMode.light;
-      case 'dark':
-        return ThemeMode.dark;
-      case 'system':
-      default:
-        return ThemeMode.system;
-    }
+    return switch (modeString) {
+      'light' => ThemeMode.light,
+      'dark' => ThemeMode.dark,
+      _ => ThemeMode.system,
+    };
   }
 
   Future<void> setThemeMode(ThemeMode mode) async {
     state = mode;
-    String modeString;
-    switch (mode) {
-      case ThemeMode.light:
-        modeString = 'light';
-        break;
-      case ThemeMode.dark:
-        modeString = 'dark';
-        break;
-      case ThemeMode.system:
-      default:
-        modeString = 'system';
-        break;
-    }
+    final modeString = switch (mode) {
+      ThemeMode.light => 'light',
+      ThemeMode.dark => 'dark',
+      ThemeMode.system => 'system',
+    };
     await _storageService.setThemeMode(modeString);
   }
 }

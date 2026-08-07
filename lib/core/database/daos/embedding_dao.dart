@@ -1,5 +1,3 @@
-import 'dart:typed_data';
-
 import 'package:ai_gallery/domain/models/embedding.dart';
 import 'package:sqflite/sqflite.dart';
 

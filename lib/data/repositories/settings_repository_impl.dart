@@ -8,9 +8,6 @@ class SettingsRepositoryImpl implements SettingsRepository {
 
   final StorageService _storage;
 
-  static const _keyAiMode = 'settings_ai_mode';
-  static const _keyGridSize = 'settings_grid_size';
-
   @override
   UserSettings getSettings() {
     return UserSettings(

@@ -4,7 +4,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:ai_gallery/ai/providers/embedding_provider.dart';
 import 'package:ai_gallery/ai/providers/local_embedding_provider.dart';
 import 'package:ai_gallery/core/di/providers.dart';
-import 'package:ai_gallery/core/logging/app_logger.dart';
 import 'package:ai_gallery/domain/models/user_settings.dart';
 import 'package:ai_gallery/features/search/services/search_service.dart';
 import 'package:ai_gallery/features/search/services/natural_language_parser.dart';
@@ -15,7 +14,7 @@ import 'package:ai_gallery/features/search/services/search_suggestion_service.da
 // Re-export types from search_service
 // ─────────────────────────────────────────────
 
-export '../services/search_service.dart' show SearchResult, SearchFilters, RankingContext;
+export '../services/search_service.dart' show SearchResult, SearchFilters;
 export '../services/natural_language_parser.dart' show ParsedQuery, NaturalLanguageParser;
 export '../services/ranking_engine.dart' show RankingEngine, RankedSearchResult, RankingContext;
 export '../services/search_suggestion_service.dart' show SearchSuggestionService, SearchSuggestion, SuggestionType;

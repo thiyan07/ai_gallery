@@ -225,6 +225,7 @@ class ModelPresets {
       description: 'SigLIP Base Patch16 224 - Best quality image embeddings',
       inputSize: 224,
       embeddingDim: 768,
+      localName: 'siglip_base_patch16_224', // Matches bundled asset filename
     ),
     'siglip-base-patch16-256': ModelConfig(
       modelId: 'google/siglip-base-patch16-256',
@@ -232,6 +233,7 @@ class ModelPresets {
       description: 'SigLIP Base Patch16 256 - Higher resolution',
       inputSize: 256,
       embeddingDim: 768,
+      localName: 'siglip_base_patch16_256',
     ),
     'clip-vit-base-patch32': ModelConfig(
       modelId: 'openai/clip-vit-base-patch32',
@@ -239,6 +241,7 @@ class ModelPresets {
       description: 'CLIP ViT-B/32 - Classic CLIP model',
       inputSize: 224,
       embeddingDim: 512,
+      localName: 'clip_vit_base_patch32',
     ),
     'mobileclip-s1': ModelConfig(
       modelId: 'apple/MobileCLIP_S1',
@@ -246,6 +249,7 @@ class ModelPresets {
       description: 'MobileCLIP S1 - Fast mobile-optimized',
       inputSize: 224,
       embeddingDim: 512,
+      localName: 'mobileclip_s1',
     ),
     'mobileclip-s2': ModelConfig(
       modelId: 'apple/MobileCLIP_S2',
@@ -253,6 +257,7 @@ class ModelPresets {
       description: 'MobileCLIP S2 - Better quality mobile',
       inputSize: 224,
       embeddingDim: 512,
+      localName: 'mobileclip_s2',
     ),
 
     // Object detection models (YOLOv8)
@@ -262,6 +267,7 @@ class ModelPresets {
       description: 'YOLOv8 Nano - Fastest, ~6MB',
       inputSize: 640,
       embeddingDim: 0, // Not applicable for detection
+      localName: 'yolov8n',
     ),
     'yolov8s': ModelConfig(
       modelId: 'onnx/community/yolov8s',
@@ -269,6 +275,7 @@ class ModelPresets {
       description: 'YOLOv8 Small - Balanced, ~22MB',
       inputSize: 640,
       embeddingDim: 0,
+      localName: 'yolov8s',
     ),
     'yolov8m': ModelConfig(
       modelId: 'onnx/community/yolov8m',
@@ -276,6 +283,7 @@ class ModelPresets {
       description: 'YOLOv8 Medium - Better accuracy, ~52MB',
       inputSize: 640,
       embeddingDim: 0,
+      localName: 'yolov8m',
     ),
     'yolov8l': ModelConfig(
       modelId: 'onnx/community/yolov8l',
@@ -283,13 +291,74 @@ class ModelPresets {
       description: 'YOLOv8 Large - Best accuracy, ~87MB',
       inputSize: 640,
       embeddingDim: 0,
+      localName: 'yolov8l',
     ),
-    'yolov8x': ModelConfig(
-      modelId: 'onnx/community/yolov8x',
+    // Face detection models (BlazeFace)
+    'blaze_face_short_range': ModelConfig(
+      modelId: 'google/blazeface',
+      filename: 'blaze_face_short_range.onnx',
+      description: 'BlazeFace Short Range - Fast face detection 128x128, ~3MB',
+      inputSize: 128,
+      embeddingDim: 0,
+      localName: 'blaze_face_short_range',
+    ),
+    'blaze_face_full_range': ModelConfig(
+      modelId: 'google/blazeface',
+      filename: 'blaze_face_full_range.onnx',
+      description: 'BlazeFace Full Range - Better distance face detection 256x256, ~6MB',
+      inputSize: 256,
+      embeddingDim: 0,
+      localName: 'blaze_face_full_range',
+    ),
+    // Face embedding models (for recognition/clustering)
+    'mobilefacenet': ModelConfig(
+      modelId: 'onnx/community/mobilefacenet',
       filename: 'model.onnx',
-      description: 'YOLOv8 Extra Large - Maximum accuracy, ~136MB',
+      description: 'MobileFaceNet - Fast face embedding 112x112, 128-dim, ~1.5MB',
+      inputSize: 112,
+      embeddingDim: 128,
+      localName: 'mobilefacenet',
+    ),
+    'arcface_r18': ModelConfig(
+      modelId: 'onnx/community/arcface_r18',
+      filename: 'model.onnx',
+      description: 'ArcFace ResNet18 - High quality face embedding 112x112, 512-dim, ~17MB',
+      inputSize: 112,
+      embeddingDim: 512,
+      localName: 'arcface_r18',
+    ),
+    'arcface_r50': ModelConfig(
+      modelId: 'onnx/community/arcface_r50',
+      filename: 'model.onnx',
+      description: 'ArcFace ResNet50 - Best quality face embedding 112x112, 512-dim, ~85MB',
+      inputSize: 112,
+      embeddingDim: 512,
+      localName: 'arcface_r50',
+    ),
+    'adaface_ir18': ModelConfig(
+      modelId: 'onnx/community/adaface_ir18',
+      filename: 'model.onnx',
+      description: 'AdaFace IR-18 - Robust face embedding 112x112, 512-dim, ~17MB',
+      inputSize: 112,
+      embeddingDim: 512,
+      localName: 'adaface_ir18',
+    ),
+    // OCR models (PaddleOCR)
+    'ppocr_det': ModelConfig(
+      modelId: 'onnx/community/ppocr_det',
+      filename: 'det_db.onnx',
+      description: 'PaddleOCR DB Text Detector - 640x640, ~3MB',
       inputSize: 640,
       embeddingDim: 0,
+      localName: 'ppocr_det',
+    ),
+    'ppocr_rec': ModelConfig(
+      modelId: 'onnx/community/ppocr_rec',
+      filename: 'rec_svtr.onnx',
+      description: 'PaddleOCR SVTR Text Recognizer - 32x320, ~6MB',
+      inputSize: 320,
+      embeddingDim: 0,
+      localName: 'ppocr_rec',
     ),
   };
 }
@@ -302,6 +371,7 @@ class ModelConfig {
     required this.description,
     required this.inputSize,
     required this.embeddingDim,
+    this.localName,
   });
 
   final String modelId;
@@ -309,6 +379,9 @@ class ModelConfig {
   final String description;
   final int inputSize;
   final int embeddingDim;
+  final String? localName;
 
-  String get localName => modelId.replaceAll('/', '_');
+  /// The local filename used for storage and asset lookup.
+  /// Falls back to modelId with '/' replaced by '_' if not explicitly set.
+  String get resolvedLocalName => localName ?? modelId.replaceAll('/', '_');
 }

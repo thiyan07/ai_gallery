@@ -3,7 +3,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:photo_manager/photo_manager.dart';
 import '../../../core/di/providers.dart';
 import '../../../domain/repositories/photo_repository.dart';
-import '../../../core/logging/app_logger.dart';
 
 // ─────────────────────────────────────────────
 // Permission

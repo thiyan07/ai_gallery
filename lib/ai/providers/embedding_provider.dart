@@ -1,5 +1,7 @@
 import 'dart:typed_data';
 
+import '../../domain/models/face_detection.dart';
+
 /// Interface for generating embeddings for photos.
 ///
 /// Implementations may use:
@@ -25,4 +27,30 @@ abstract class EmbeddingProvider {
 
   /// Generates an embedding for the given text.
   Future<Float32List> generateTextEmbedding(String text);
+
+  /// Generates a face embedding using face alignment (eye keypoints).
+  ///
+  /// This method is only implemented by face-specific embedding providers.
+  /// It aligns the face using eye keypoints from the FaceDetection before
+  /// generating the embedding for better recognition accuracy.
+  ///
+  /// [imageBytes] - Full image bytes
+  /// [faceDetection] - Face detection with keypoints for alignment
+  ///
+  /// Default implementation throws UnimplementedError.
+  Future<Float32List> generateEmbeddingFromFace({
+    required Uint8List imageBytes,
+    required FaceDetection faceDetection,
+  }) async {
+    throw UnimplementedError('generateEmbeddingFromFace not implemented for this provider');
+  }
+
+  /// Initialize the provider.
+  Future<void> initialize();
+
+  /// Warm up the model (run dummy inference).
+  Future<void> warmUp();
+
+  /// Dispose resources.
+  Future<void> dispose();
 }

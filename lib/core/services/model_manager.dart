@@ -31,8 +31,8 @@ class ModelManager {
     final config = ModelPresets.presets[_selectedModel!];
     if (config == null) return null;
 
-    if (await downloader.isModelDownloaded(config.localName)) {
-      return await downloader.getModelPath(config.localName);
+    if (await downloader.isModelDownloaded(config.resolvedLocalName)) {
+      return await downloader.getModelPath(config.resolvedLocalName);
     }
 
     // Download the model

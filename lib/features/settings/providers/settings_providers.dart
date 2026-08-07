@@ -1,5 +1,4 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:ai_gallery/core/theme/theme_providers.dart';
 import 'package:ai_gallery/core/di/providers.dart' as di_providers;
 import 'package:ai_gallery/core/services/model_downloader.dart';
 

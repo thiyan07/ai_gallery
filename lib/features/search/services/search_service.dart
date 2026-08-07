@@ -250,20 +250,16 @@ class SearchService {
     if (filters.orientation != null && meta.orientation != filters.orientation) {
       return false;
     }
-    // ignore: dead_code
-    if (filters.minWidth != null && (meta.width ?? 0) < filters.minWidth!) {
+    if (filters.minWidth != null && meta.width < filters.minWidth!) {
       return false;
     }
-    // ignore: dead_code
-    if (filters.maxWidth != null && (meta.width ?? 0) > filters.maxWidth!) {
+    if (filters.maxWidth != null && meta.width > filters.maxWidth!) {
       return false;
     }
-    // ignore: dead_code
-    if (filters.minHeight != null && (meta.height ?? 0) < filters.minHeight!) {
+    if (filters.minHeight != null && meta.height < filters.minHeight!) {
       return false;
     }
-    // ignore: dead_code
-    if (filters.maxHeight != null && (meta.height ?? 0) > filters.maxHeight!) {
+    if (filters.maxHeight != null && meta.height > filters.maxHeight!) {
       return false;
     }
     return true;

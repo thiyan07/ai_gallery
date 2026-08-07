@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 /// AI processing mode for the application.
 enum AiMode {
   /// Process everything on-device only.
@@ -78,6 +80,41 @@ class UserSettings {
       syncFrequency: syncFrequency ?? this.syncFrequency,
       aiMode: aiMode ?? this.aiMode,
       gridSize: gridSize ?? this.gridSize,
+    );
+  }
+
+  /// Serializes settings to JSON string for worker isolate communication.
+  String toJsonString() {
+    return jsonEncode({
+      'themeMode': themeMode,
+      'accentColor': accentColor,
+      'onboardingCompleted': onboardingCompleted,
+      'telemetryEnabled': telemetryEnabled,
+      'cloudBackupEnabled': cloudBackupEnabled,
+      'storagePath': storagePath,
+      'syncWifiOnly': syncWifiOnly,
+      'syncFrequency': syncFrequency,
+      'aiMode': aiMode.name,
+      'gridSize': gridSize,
+    });
+  }
+
+  factory UserSettings.fromJsonString(String json) {
+    final map = jsonDecode(json) as Map<String, dynamic>;
+    return UserSettings(
+      themeMode: map['themeMode'] as String? ?? 'system',
+      accentColor: map['accentColor'] as int? ?? 0xFF6200EE,
+      onboardingCompleted: map['onboardingCompleted'] as bool? ?? false,
+      telemetryEnabled: map['telemetryEnabled'] as bool? ?? false,
+      cloudBackupEnabled: map['cloudBackupEnabled'] as bool? ?? false,
+      storagePath: map['storagePath'] as String?,
+      syncWifiOnly: map['syncWifiOnly'] as bool? ?? true,
+      syncFrequency: map['syncFrequency'] as String? ?? 'daily',
+      aiMode: AiMode.values.firstWhere(
+        (m) => m.name == (map['aiMode'] as String? ?? 'local'),
+        orElse: () => AiMode.local,
+      ),
+      gridSize: map['gridSize'] as int? ?? 3,
     );
   }
 }

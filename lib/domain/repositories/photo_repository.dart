@@ -44,4 +44,7 @@ abstract class PhotoRepository {
 
   /// Fetches raw image bytes for an asset by id.
   Future<Uint8List?> getImageBytes(String assetId);
+
+  /// Fetches multiple assets by their IDs.
+  Future<List<AssetEntity>> getAssetsByIds(List<String> ids);
 }

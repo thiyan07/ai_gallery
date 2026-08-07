@@ -8,8 +8,10 @@ import '../widgets/bulk_action_bar.dart';
 import '../../settings/screens/settings_screen.dart';
 import 'favorites_screen.dart';
 import '../../search/search.dart';
+import '../../people/providers/people_providers.dart';
+import '../../people/screens/people_screen.dart';
 
-/// Root shell with bottom navigation: Gallery | Favorites | Settings.
+/// Root shell with bottom navigation: Gallery | Favorites | People | Settings.
 class GalleryHomeScreen extends ConsumerStatefulWidget {
   const GalleryHomeScreen({super.key});
 
@@ -28,6 +30,7 @@ class _GalleryHomeScreenState extends ConsumerState<GalleryHomeScreen> {
     final screens = [
       const _GalleryTab(),
       const FavoritesScreen(),
+      const PeopleScreen(),
       const SettingsScreen(),
     ];
 
@@ -49,6 +52,11 @@ class _GalleryHomeScreenState extends ConsumerState<GalleryHomeScreen> {
             icon: Icon(Icons.star_outline),
             selectedIcon: Icon(Icons.star),
             label: 'Favorites',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.people_outline),
+            selectedIcon: Icon(Icons.people),
+            label: 'People',
           ),
           NavigationDestination(
             icon: Icon(Icons.settings_outlined),
@@ -425,9 +433,6 @@ class _PinchZoomGridState extends ConsumerState<_PinchZoomGrid> with TickerProvi
   double _lastPinchScale = 1.0;
   bool _isPinching = false;
   static const double _pinchSensitivity = 0.4;
-
-  // Grid size thresholds for pinch gesture
-  static const List<int> _gridSizes = [2, 3, 4, 5, 6];
 
   @override
   void initState() {

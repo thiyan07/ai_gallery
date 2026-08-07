@@ -10,6 +10,7 @@ enum AIJobStatus {
 /// Type of AI processing job.
 enum AIJobType {
   faceDetection,
+  faceEmbedding,
   objectTagging,
   ocr,
   embedding,

@@ -2,9 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:ai_gallery/core/theme/app_theme.dart';
 import 'package:ai_gallery/core/theme/theme_providers.dart';
-import 'package:ai_gallery/core/di/providers.dart' as di_providers;
-import 'package:ai_gallery/core/services/model_manager.dart';
-import 'package:ai_gallery/core/logging/app_logger.dart';
 import '../../onboarding/providers/onboarding_provider.dart';
 import '../../indexing/screens/indexing_screen.dart';
 import '../screens/api_keys_screen.dart';
@@ -505,7 +502,6 @@ class SettingsScreen extends ConsumerWidget {
       case ThemeMode.dark:
         return 'Dark Mode';
       case ThemeMode.system:
-      default:
         return 'System (Auto)';
     }
   }

@@ -1,8 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:photo_manager/photo_manager.dart';
 
 import '../providers/search_providers.dart';
 import '../../gallery/providers/gallery_providers.dart';
+import '../../gallery/screens/photo_view_screen.dart';
+import '../../../../core/di/providers.dart';
+import '../../../../domain/repositories/photo_repository.dart';
 
 /// Search screen with text and image search capabilities.
 class SearchScreen extends ConsumerStatefulWidget {
@@ -118,6 +122,7 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
 
   Widget _buildFiltersBar(ThemeData theme) {
     final filters = ref.watch(searchFiltersProvider);
+    final filtersNotifier = ref.read(searchFiltersProvider.notifier);
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       decoration: BoxDecoration(
@@ -133,19 +138,15 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
             _buildFilterChip(
               theme,
               label: 'Quality',
-              selected: filters.minQualityScore != null,
-              onTap: () {
-                // TODO: Show quality slider dialog
-              },
+              selected: filters.minQualityScore != null || filters.maxBlurScore != null,
+              onTap: () => _showQualityDialog(context, theme, filters, filtersNotifier),
             ),
             const SizedBox(width: 8),
             _buildFilterChip(
               theme,
               label: 'Date Range',
               selected: filters.dateFrom != null || filters.dateTo != null,
-              onTap: () {
-                // TODO: Show date range picker
-              },
+              onTap: () => _showDateRangeDialog(context, theme, filters, filtersNotifier),
             ),
             const SizedBox(width: 8),
             _buildFilterChip(
@@ -153,21 +154,168 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
               label: 'Location',
               selected: filters.hasLocation,
               onTap: () {
-                ref.read(searchFiltersProvider.notifier).setHasLocation(!filters.hasLocation);
+                filtersNotifier.setHasLocation(!filters.hasLocation);
               },
             ),
             if (filters.minQualityScore != null ||
+                filters.maxBlurScore != null ||
                 filters.dateFrom != null ||
                 filters.dateTo != null ||
                 filters.hasLocation) ...[
               const SizedBox(width: 8),
               TextButton(
                 onPressed: () {
-                  ref.read(searchFiltersProvider.notifier).clear();
+                  filtersNotifier.clear();
                 },
                 child: const Text('Clear All'),
               ),
             ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _showQualityDialog(
+    BuildContext context,
+    ThemeData theme,
+    SearchFilters filters,
+    SearchFiltersNotifier notifier,
+  ) async {
+    double minQuality = filters.minQualityScore ?? 0.0;
+    double maxBlur = filters.maxBlurScore ?? 1.0;
+
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setState) => AlertDialog(
+          title: const Text('Quality Filters'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text('Minimum Quality Score', style: theme.textTheme.labelMedium),
+              const SizedBox(height: 8),
+              Slider(
+                value: minQuality,
+                min: 0.0,
+                max: 1.0,
+                divisions: 20,
+                label: '${(minQuality * 100).round()}%',
+                onChanged: (value) => setState(() => minQuality = value),
+              ),
+              const SizedBox(height: 16),
+              Text('Maximum Blur Score', style: theme.textTheme.labelMedium),
+              const SizedBox(height: 8),
+              Slider(
+                value: maxBlur,
+                min: 0.0,
+                max: 1.0,
+                divisions: 20,
+                label: '${(maxBlur * 100).round()}%',
+                onChanged: (value) => setState(() => maxBlur = value),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () {
+                notifier.setMinQuality(null);
+                notifier.setMaxBlur(null);
+                Navigator.of(dialogContext).pop();
+              },
+              child: const Text('Clear'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () {
+                notifier.setMinQuality(minQuality > 0 ? minQuality : null);
+                notifier.setMaxBlur(maxBlur < 1 ? maxBlur : null);
+                Navigator.of(dialogContext).pop();
+              },
+              child: const Text('Apply'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _showDateRangeDialog(
+    BuildContext context,
+    ThemeData theme,
+    SearchFilters filters,
+    SearchFiltersNotifier notifier,
+  ) async {
+    DateTime? from = filters.dateFrom;
+    DateTime? to = filters.dateTo;
+
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setState) => AlertDialog(
+          title: const Text('Date Range'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ListTile(
+                title: const Text('From'),
+                subtitle: Text(
+                  from != null ? _formatDate(from!) : 'Not selected',
+                  style: theme.textTheme.bodyMedium,
+                ),
+                trailing: const Icon(Icons.calendar_today),
+                onTap: () async {
+                  final date = await showDatePicker(
+                    context: dialogContext,
+                    initialDate: from ?? DateTime.now(),
+                    firstDate: DateTime(2000),
+                    lastDate: DateTime.now(),
+                  );
+                  if (date != null) setState(() => from = date);
+                },
+              ),
+              const Divider(),
+              ListTile(
+                title: const Text('To'),
+                subtitle: Text(
+                  to != null ? _formatDate(to!) : 'Not selected',
+                  style: theme.textTheme.bodyMedium,
+                ),
+                trailing: const Icon(Icons.calendar_today),
+                onTap: () async {
+                  final date = await showDatePicker(
+                    context: dialogContext,
+                    initialDate: to ?? DateTime.now(),
+                    firstDate: DateTime(2000),
+                    lastDate: DateTime.now(),
+                  );
+                  if (date != null) setState(() => to = date);
+                },
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () {
+                notifier.setDateRange(null, null);
+                Navigator.of(dialogContext).pop();
+              },
+              child: const Text('Clear'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () {
+                notifier.setDateRange(from, to);
+                Navigator.of(dialogContext).pop();
+              },
+              child: const Text('Apply'),
+            ),
           ],
         ),
       ),
@@ -315,9 +463,35 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
     return _SearchResultsGrid(
       results: results,
       gridSize: gridSize,
-      onTap: (result) {
-        // TODO: Navigate to photo view
-      },
+      onTap: (result) => _navigateToPhotoView(context, result),
+    );
+  }
+
+  Future<void> _navigateToPhotoView(BuildContext context, RankedSearchResult result) async {
+    // Get all photo IDs from current results to enable swipe navigation
+    final allResults = ref.read(searchResultsProvider);
+    final photoIds = allResults.when(
+      data: (results) => results.map((r) => r.photoId).toList(),
+      loading: () => <String>[result.photoId],
+      error: (_, __) => <String>[result.photoId],
+    );
+
+    // Fetch all assets for the swipe gallery
+    final photoRepo = ref.read(photoRepositoryProvider);
+    final assets = await photoRepo.getAssetsByIds(photoIds);
+
+    if (!context.mounted || assets.isEmpty) return;
+
+    // Find the index of the tapped photo
+    final initialIndex = assets.indexWhere((a) => a.id == result.photoId);
+
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => PhotoViewScreen(
+          assets: assets,
+          initialIndex: initialIndex >= 0 ? initialIndex : 0,
+        ),
+      ),
     );
   }
 

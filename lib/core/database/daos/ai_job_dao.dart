@@ -40,6 +40,19 @@ class AiJobDao {
     return rows.map(_fromRow).toList();
   }
 
+  /// Returns a stream of jobs with the given status, updated on database changes.
+  Stream<List<AIJob>> watchByStatus(AIJobStatus status) {
+    return _db
+        .query(
+          'ai_jobs',
+          where: 'status = ?',
+          whereArgs: [status.name],
+          orderBy: 'created_at ASC',
+        )
+        .asStream()
+        .map((rows) => rows.map(_fromRow).toList());
+  }
+
   /// Returns all jobs for a photo.
   Future<List<AIJob>> getByPhotoId(String photoId) async {
     final rows = await _db.query(
