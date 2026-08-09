@@ -148,14 +148,37 @@ class SearchQueryNotifier extends Notifier<String> {
 final searchResultsProvider = FutureProvider<List<RankedSearchResult>>((ref) async {
   // Watch the parsed query which includes both semantic query and extracted filters
   final parsedQueryAsync = ref.watch(parsedQueryProvider);
+  // Also watch manual filters
+  final manualFilters = ref.watch(searchFiltersProvider);
 
   return parsedQueryAsync.when(
     data: (parsedQuery) async {
       if (parsedQuery.semanticQuery.trim().isEmpty) return [];
 
+      // Combine parsed filters with manual filters
+      final combinedFilters = parsedQuery.filters.copyWith(
+        minQualityScore: manualFilters.minQualityScore ?? parsedQuery.filters.minQualityScore,
+        maxBlurScore: manualFilters.maxBlurScore ?? parsedQuery.filters.maxBlurScore,
+        dateFrom: manualFilters.dateFrom ?? parsedQuery.filters.dateFrom,
+        dateTo: manualFilters.dateTo ?? parsedQuery.filters.dateTo,
+        hasLocation: manualFilters.hasLocation || parsedQuery.filters.hasLocation,
+        cameraMake: manualFilters.cameraMake ?? parsedQuery.filters.cameraMake,
+        cameraModel: manualFilters.cameraModel ?? parsedQuery.filters.cameraModel,
+        albumId: manualFilters.albumId ?? parsedQuery.filters.albumId,
+        folderPath: manualFilters.folderPath ?? parsedQuery.filters.folderPath,
+        mediaType: manualFilters.mediaType ?? parsedQuery.filters.mediaType,
+        orientation: manualFilters.orientation ?? parsedQuery.filters.orientation,
+        favoritesOnly: manualFilters.favoritesOnly || parsedQuery.filters.favoritesOnly,
+        minWidth: manualFilters.minWidth ?? parsedQuery.filters.minWidth,
+        maxWidth: manualFilters.maxWidth ?? parsedQuery.filters.maxWidth,
+        minHeight: manualFilters.minHeight ?? parsedQuery.filters.minHeight,
+        maxHeight: manualFilters.maxHeight ?? parsedQuery.filters.maxHeight,
+      );
+
       final searchService = ref.watch(searchServiceProvider);
       // Use the new searchParsed method that handles semantic query + filters + ranking
-      return searchService.searchParsed(parsedQuery, limit: 20);
+      final updatedParsedQuery = parsedQuery.copyWith(filters: combinedFilters);
+      return searchService.searchParsed(updatedParsedQuery, limit: 20);
     },
     loading: () => [],
     error: (e, st) {

@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:photo_manager/photo_manager.dart';
 import 'package:photo_manager_image_provider/photo_manager_image_provider.dart';
 import 'package:share_plus/share_plus.dart';
+import 'package:ai_gallery/features/search/providers/search_providers.dart';
 import '../providers/favorites_provider.dart';
 
 /// Full-screen photo viewer with swipe navigation, zoom, and action bar.
@@ -80,6 +81,11 @@ class _PhotoViewScreenState extends ConsumerState<PhotoViewScreen> {
                   onPressed: _share,
                 ),
                 IconButton(
+                  icon: const Icon(Icons.search_outlined, color: Colors.white),
+                  tooltip: 'Find Similar',
+                  onPressed: _findSimilar,
+                ),
+                IconButton(
                   icon: const Icon(Icons.info_outline, color: Colors.white),
                   onPressed: () => _showDetails(context),
                 ),
@@ -122,6 +128,36 @@ class _PhotoViewScreenState extends ConsumerState<PhotoViewScreen> {
               ),
             );
           },
+        ),
+      ),
+    );
+  }
+
+  Future<void> _findSimilar() async {
+    final searchService = ref.read(searchServiceProvider);
+    final results = await searchService.searchSimilar(_current.id, limit: 20);
+
+    if (!mounted) return;
+
+    if (results.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('No similar photos found'),
+          backgroundColor: Colors.orange,
+        ),
+      );
+      return;
+    }
+
+    // Extract asset IDs from results and load them
+    final photoIds = results.map((r) => r.photoId).toList();
+
+    // Navigate to photo view screen with similar photos
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => _SimilarPhotosScreen(
+          searchResults: results,
+          originalAsset: _current,
         ),
       ),
     );
@@ -222,6 +258,217 @@ class _DetailRow extends StatelessWidget {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// Screen showing similar photos found via visual search.
+class _SimilarPhotosScreen extends ConsumerStatefulWidget {
+  final List<RankedSearchResult> searchResults;
+  final AssetEntity originalAsset;
+
+  const _SimilarPhotosScreen({
+    required this.searchResults,
+    required this.originalAsset,
+  });
+
+  @override
+  ConsumerState<_SimilarPhotosScreen> createState() => _SimilarPhotosScreenState();
+}
+
+class _SimilarPhotosScreenState extends ConsumerState<_SimilarPhotosScreen> {
+  late List<AssetEntity> _similarAssets;
+  bool _loading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadSimilarAssets();
+  }
+
+  Future<void> _loadSimilarAssets() async {
+    // Fetch AssetEntity objects for the photo IDs
+    final photoIds = widget.searchResults.map((r) => r.photoId).toSet();
+    final allAssets = await PhotoManager.getAssetPathList(type: RequestType.image);
+    final matchingAssets = <AssetEntity>[];
+
+    for (final assetPath in allAssets) {
+      final assets = await assetPath.getAssetListPaged(page: 0, size: 10000);
+      for (final asset in assets) {
+        if (photoIds.contains(asset.id)) {
+          matchingAssets.add(asset);
+        }
+      }
+    }
+
+    // Sort to match the search results order
+    final idToIndex = {for (var i = 0; i < widget.searchResults.length; i++) widget.searchResults[i].photoId: i};
+    matchingAssets.sort((a, b) => (idToIndex[a.id] ?? 999).compareTo(idToIndex[b.id] ?? 999));
+
+    if (mounted) {
+      setState(() {
+        _similarAssets = matchingAssets;
+        _loading = false;
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.black,
+      appBar: AppBar(
+        backgroundColor: Colors.black54,
+        foregroundColor: Colors.white,
+        elevation: 0,
+        title: Text(
+          'Similar to "${widget.originalAsset.title ?? 'Photo'}"',
+          style: const TextStyle(fontSize: 15),
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.search_outlined, color: Colors.white),
+            tooltip: 'Find More Similar',
+            onPressed: _findMoreSimilar,
+          ),
+        ],
+      ),
+      body: _loading
+          ? const Center(child: CircularProgressIndicator(color: Colors.white))
+          : _similarAssets.isEmpty
+              ? Center(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      const Icon(Icons.search_off, color: Colors.white54, size: 64),
+                      const SizedBox(height: 16),
+                      Text(
+                        'No similar photos found',
+                        style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                              color: Colors.white70,
+                            ),
+                      ),
+                    ],
+                  ),
+                )
+              : GridView.builder(
+                  padding: const EdgeInsets.all(2),
+                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                    crossAxisCount: 3,
+                    crossAxisSpacing: 2,
+                    mainAxisSpacing: 2,
+                  ),
+                  itemCount: _similarAssets.length,
+                  itemBuilder: (context, index) {
+                    final asset = _similarAssets[index];
+                    final result = widget.searchResults.firstWhere(
+                      (r) => r.photoId == asset.id,
+                      orElse: () => widget.searchResults[index],
+                    );
+                    return GestureDetector(
+                      onTap: () => _openPhotoView(index),
+                      child: Stack(
+                        fit: StackFit.expand,
+                        children: [
+                          AssetEntityImage(
+                            asset,
+                            isOriginal: false,
+                            thumbnailSize: const ThumbnailSize.square(300),
+                            fit: BoxFit.cover,
+                            errorBuilder: (_, __, ___) => Container(
+                              color: Colors.grey[800],
+                              child: const Icon(
+                                Icons.broken_image_outlined,
+                                color: Colors.grey,
+                              ),
+                            ),
+                          ),
+                          Positioned(
+                            bottom: 0,
+                            left: 0,
+                            right: 0,
+                            child: Container(
+                              padding: const EdgeInsets.all(4),
+                              decoration: BoxDecoration(
+                                gradient: LinearGradient(
+                                  begin: Alignment.bottomCenter,
+                                  end: Alignment.topCenter,
+                                  colors: [
+                                    Colors.black.withValues(alpha: 0.8),
+                                    Colors.transparent,
+                                  ],
+                                ),
+                              ),
+                              child: Text(
+                                '${(result.score * 100).toInt()}%',
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                                textAlign: TextAlign.right,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    );
+                  },
+                ),
+    );
+  }
+
+  Future<void> _findMoreSimilar() async {
+    // Use the first similar result as the new reference
+    if (_similarAssets.isNotEmpty) {
+      final searchService = ref.read(searchServiceProvider);
+      final results = await searchService.searchSimilar(_similarAssets[0].id, limit: 20);
+
+      if (!mounted) return;
+
+      if (results.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('No more similar photos found')),
+        );
+        return;
+      }
+
+      final photoIds = results.map((r) => r.photoId).toSet();
+      final allAssets = await PhotoManager.getAssetPathList(type: RequestType.image);
+      final matchingAssets = <AssetEntity>[];
+
+      for (final assetPath in allAssets) {
+        final assets = await assetPath.getAssetListPaged(page: 0, size: 10000);
+        for (final asset in assets) {
+          if (photoIds.contains(asset.id)) {
+            matchingAssets.add(asset);
+          }
+        }
+      }
+
+      final idToIndex = {for (var i = 0; i < results.length; i++) results[i].photoId: i};
+      matchingAssets.sort((a, b) => (idToIndex[a.id] ?? 999).compareTo(idToIndex[b.id] ?? 999));
+
+      if (mounted) {
+        setState(() {
+          _similarAssets = matchingAssets;
+          widget.searchResults.clear();
+          widget.searchResults.addAll(results);
+        });
+      }
+    }
+  }
+
+  void _openPhotoView(int index) {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => PhotoViewScreen(
+          assets: _similarAssets,
+          initialIndex: index,
+        ),
       ),
     );
   }

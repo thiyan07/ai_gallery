@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:photo_manager/photo_manager.dart';
+import 'package:photo_manager_image_provider/photo_manager_image_provider.dart';
 
 import '../providers/search_providers.dart';
 import '../../gallery/providers/gallery_providers.dart';
@@ -619,10 +620,12 @@ class _SearchResultTile extends StatelessWidget {
   const _SearchResultTile({
     required this.result,
     required this.onTap,
+    this.asset,
   });
 
   final RankedSearchResult result;
   final VoidCallback onTap;
+  final AssetEntity? asset;
 
   @override
   Widget build(BuildContext context) {
@@ -635,26 +638,44 @@ class _SearchResultTile extends StatelessWidget {
         ),
         child: Stack(
           fit: StackFit.expand,
-          children: [
-            // Thumbnail placeholder
-            Container(
-              decoration: BoxDecoration(
+          children: <Widget>[
+            // Thumbnail
+            if (asset != null)
+              ClipRRect(
                 borderRadius: BorderRadius.circular(8),
-                gradient: LinearGradient(
-                  colors: [
-                    Theme.of(context).colorScheme.primaryContainer,
-                    Theme.of(context).colorScheme.secondaryContainer,
-                  ],
+                child: AssetEntityImage(
+                  asset!,
+                  isOriginal: false,
+                  thumbnailSize: const ThumbnailSize.square(300),
+                  fit: BoxFit.cover,
+                  errorBuilder: (_, __, ___) => Container(
+                    color: Colors.grey[200],
+                    child: const Icon(
+                      Icons.broken_image_outlined,
+                      color: Colors.grey,
+                    ),
+                  ),
+                ),
+              )
+            else
+              Container(
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(8),
+                  gradient: LinearGradient(
+                    colors: [
+                      Theme.of(context).colorScheme.primaryContainer,
+                      Theme.of(context).colorScheme.secondaryContainer,
+                    ],
+                  ),
+                ),
+                child: Center(
+                  child: Icon(
+                    Icons.image,
+                    size: 32,
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  ),
                 ),
               ),
-              child: Center(
-                child: Icon(
-                  Icons.image,
-                  size: 32,
-                  color: Theme.of(context).colorScheme.onSurfaceVariant,
-                ),
-              ),
-            ),
             // Score badge
             Positioned(
               top: 4,
@@ -716,11 +737,15 @@ class _SearchResultsGridState extends ConsumerState<_SearchResultsGrid>
   bool _isPinching = false;
   static const double _pinchSensitivity = 0.4;
 
+  // Map of photoId to AssetEntity for thumbnail loading
+  final Map<String, AssetEntity> _assetEntities = {};
+
   @override
   void initState() {
     super.initState();
     _currentGridSize = widget.gridSize;
     _targetGridSize = widget.gridSize;
+    _loadAssetEntities();
 
     _gridAnimationController = AnimationController(
       duration: const Duration(milliseconds: 300),
@@ -748,6 +773,24 @@ class _SearchResultsGridState extends ConsumerState<_SearchResultsGrid>
     _gridAnimationController.addListener(_onGridAnimationTick);
   }
 
+  Future<void> _loadAssetEntities() async {
+    final photoIds = widget.results.map((r) => r.photoId).toList();
+    final photoRepo = ref.read(photoRepositoryProvider);
+    final assets = await photoRepo.getAssetsByIds(photoIds);
+
+    final Map<String, AssetEntity> entityMap = {};
+    for (final asset in assets) {
+      entityMap[asset.id] = asset;
+    }
+
+    if (mounted) {
+      setState(() {
+        _assetEntities.clear();
+        _assetEntities.addAll(entityMap);
+      });
+    }
+  }
+
   void _onGridAnimationTick() {
     if (mounted) {
       setState(() {
@@ -759,6 +802,10 @@ class _SearchResultsGridState extends ConsumerState<_SearchResultsGrid>
   @override
   void didUpdateWidget(_SearchResultsGrid oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (oldWidget.results != widget.results) {
+      _loadAssetEntities();
+    }
+    // Trigger animation when grid size changes
     if (oldWidget.gridSize != widget.gridSize &&
         _targetGridSize == _currentGridSize) {
       _animateToGridSize(widget.gridSize);
@@ -855,10 +902,13 @@ class _SearchResultsGridState extends ConsumerState<_SearchResultsGrid>
                 ),
                 itemCount: results.length,
                 itemBuilder: (context, index) {
+                  final result = results[index];
+                  final asset = _assetEntities[result.photoId];
                   return _AnimatedSearchResultTile(
-                    result: results[index],
+                    result: result,
                     gridSize: _currentGridSize,
-                    onTap: () => widget.onTap(results[index]),
+                    onTap: () => widget.onTap(result),
+                    asset: asset,
                   );
                 },
               );
@@ -938,11 +988,13 @@ class _AnimatedSearchResultTile extends StatefulWidget {
   final RankedSearchResult result;
   final int gridSize;
   final VoidCallback onTap;
+  final AssetEntity? asset;
 
   const _AnimatedSearchResultTile({
     required this.result,
     required this.gridSize,
     required this.onTap,
+    this.asset,
   });
 
   @override
@@ -996,6 +1048,7 @@ class _AnimatedSearchResultTileState extends State<_AnimatedSearchResultTile>
         child: _SearchResultTile(
           result: widget.result,
           onTap: widget.onTap,
+          asset: widget.asset,
         ),
       ),
     );

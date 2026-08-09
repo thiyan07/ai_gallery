@@ -227,6 +227,14 @@ class ModelPresets {
       embeddingDim: 768,
       localName: 'siglip_base_patch16_224', // Matches bundled asset filename
     ),
+    'siglip-base-patch16-224-text': ModelConfig(
+      modelId: 'google/siglip-base-patch16-224',
+      filename: 'onnx/text_model.onnx',
+      description: 'SigLIP Base Patch16 224 Text Encoder - Compatible text embeddings for semantic search',
+      inputSize: 0, // N/A for text encoder
+      embeddingDim: 768,
+      localName: 'siglip_text_encoder', // Matches bundled asset filename
+    ),
     'siglip-base-patch16-256': ModelConfig(
       modelId: 'google/siglip-base-patch16-256',
       filename: 'onnx/model.onnx',

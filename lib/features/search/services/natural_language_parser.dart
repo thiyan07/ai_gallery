@@ -32,6 +32,20 @@ class ParsedQuery {
       filters.hasLocation ||
       filters.cameraMake != null ||
       filters.cameraModel != null;
+
+  ParsedQuery copyWith({
+    String? semanticQuery,
+    SearchFilters? filters,
+    double? confidence,
+    String? originalQuery,
+  }) {
+    return ParsedQuery(
+      semanticQuery: semanticQuery ?? this.semanticQuery,
+      filters: filters ?? this.filters,
+      confidence: confidence ?? this.confidence,
+      originalQuery: originalQuery ?? this.originalQuery,
+    );
+  }
 }
 
 /// Rule-based natural language query parser for photo search.

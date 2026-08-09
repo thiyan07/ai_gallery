@@ -5,6 +5,7 @@ import 'dart:typed_data';
 import 'package:flutter/services.dart' show rootBundle;
 import 'package:image/image.dart' as img;
 import 'package:onnxruntime/onnxruntime.dart';
+import 'package:dart_sentencepiece_tokenizer/dart_sentencepiece_tokenizer.dart';
 
 import 'package:ai_gallery/core/logging/app_logger.dart';
 import 'package:ai_gallery/core/services/model_manager.dart';
@@ -141,14 +142,15 @@ class LocalEmbeddingProvider implements EmbeddingProvider {
         visionModelBytes = await _loadModelFromAssets(_modelAssetPath);
       }
 
-      // Load text encoder model
+      // Load text encoder model (separate preset: siglip-base-patch16-224-text)
       Uint8List? textModelBytes;
       try {
+        // Select text encoder model in ModelManager
+        final textEncoderPreset = '${_resolvedPreset}-text';
+        _modelManager.selectModel(textEncoderPreset);
         String? textModelPath;
-        // Try to get text encoder from ModelManager
         try {
           textModelPath = await _modelManager.getSelectedModelPath();
-          // This might not work for text encoder, so try asset fallback
         } catch (_) {}
 
         if (textModelPath != null && await File(textModelPath).exists()) {
@@ -256,24 +258,45 @@ class LocalEmbeddingProvider implements EmbeddingProvider {
   /// Load tokenizer from SentencePiece model file.
   Future<void> _loadTokenizer() async {
     try {
-      await rootBundle.load(_tokenizerAssetPath);
-      // For now, use a simple word-level tokenizer as fallback
-      // In production, integrate proper SentencePiece decoding
+      // Load tokenizer model from assets
+      final modelBytes = await rootBundle.load(_tokenizerAssetPath);
+      _tokenizer = SentencePieceTokenizer.fromBytes(
+        modelBytes.buffer.asUint8List(),
+        config: SentencePieceConfig(
+          addBosToken: true,
+          addEosToken: true,
+        ),
+      );
+      _vocabSize = _tokenizer!.vocabSize;
+      _logger.info('SentencePiece tokenizer loaded (vocab size: $_vocabSize)');
+    } catch (e, st) {
+      _logger.warning('Failed to load SentencePiece tokenizer, using fallback: $e', error: e, stackTrace: st);
+      _tokenizer = null;
       _vocabSize = 32000; // Default CLIP/SigLIP vocab size
-      _logger.info('Tokenizer loaded (placeholder implementation)');
-    } catch (e) {
-      _logger.warning('Failed to load tokenizer, using fallback: $e');
-      _vocabSize = 32000;
     }
   }
 
-  /// Simple tokenizer for CLIP/SigLIP - converts text to token IDs.
-  /// This is a simplified version; production should use proper SentencePiece.
+  SentencePieceTokenizer? _tokenizer;
+
+  /// Tokenize text using SentencePiece tokenizer (CLIP/SigLIP compatible).
   List<int> _tokenize(String text) {
-    // Split by whitespace and simple punctuation, map to vocab indices
-    // This is a placeholder - real implementation needs SentencePiece
-    final words = text.toLowerCase().split(RegExp(r'[\s\p{P}]+')).where((w) => w.isNotEmpty).toList();
-    return words.map((w) => w.hashCode.abs() % _vocabSize).toList();
+    if (_tokenizer == null) {
+      // Fallback to hash-based tokenization
+      final words = text.toLowerCase().split(RegExp(r'[\s\p{P}]+')).where((w) => w.isNotEmpty).toList();
+      return words.map((w) => w.hashCode.abs() % _vocabSize).toList();
+    }
+
+    // Use proper SentencePiece tokenizer with CLIP config (BOS + EOS)
+    final encoding = _tokenizer!.encode(text);
+    final tokens = encoding.ids;
+
+    // CLIP/SigLIP max sequence length is 77
+    const maxLength = 77;
+    if (tokens.length > maxLength) {
+      // Truncate and ensure we have BOS and EOS
+      return tokens.sublist(0, maxLength - 1);
+    }
+    return tokens;
   }
 
   @override
@@ -337,18 +360,15 @@ class LocalEmbeddingProvider implements EmbeddingProvider {
     }
 
     try {
-      // Tokenize text
+      // Tokenize text using SentencePiece tokenizer (includes BOS/EOS for CLIP config)
       final tokens = _tokenize(text);
 
       // Pad or truncate to max sequence length (77 for CLIP/SigLIP)
       const maxLength = 77;
       final inputIds = List<int>.filled(maxLength, 0);
-      for (int i = 0; i < tokens.length && i < maxLength - 2; i++) {
-        inputIds[i + 1] = tokens[i]; // +1 for BOS token at position 0
-      }
-      inputIds[0] = 49406; // BOS token (CLIP default)
-      if (tokens.length < maxLength - 1) {
-        inputIds[tokens.length + 1] = 49407; // EOS token
+      final copyLen = tokens.length.clamp(0, maxLength);
+      for (int i = 0; i < copyLen; i++) {
+        inputIds[i] = tokens[i];
       }
 
       // Create input tensor [1, 77]
