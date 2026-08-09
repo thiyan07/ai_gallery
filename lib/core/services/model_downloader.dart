@@ -47,16 +47,19 @@ class ModelDownloader {
   ///
   /// [modelId] - Hugging Face model ID (e.g., "google/siglip-base-patch16-224")
   /// [filename] - Specific ONNX filename in the repo (e.g., "onnx/model.onnx")
+  /// [localName] - Unique local filename (without .onnx) to avoid collisions when
+  ///   multiple model files come from the same HF repo (e.g., image + text encoder)
   /// [revision] - Git revision/branch (default: "main")
   /// [progressCallback] - Called with progress (0.0 to 1.0)
   Future<String> downloadModel({
     required String modelId,
     required String filename,
+    required String localName,
     String revision = 'main',
     void Function(double)? progressCallback,
   }) async {
     await _ensureInitialized();
-    final localPath = await getModelPath(modelId.replaceAll('/', '_'));
+    final localPath = await getModelPath(localName);
 
     // Check if already exists
     if (await File(localPath).exists()) {
@@ -106,10 +109,11 @@ class ModelDownloader {
   Future<String> downloadFromUrl({
     required String url,
     required String modelName,
+    String? localName,
     void Function(double)? progressCallback,
   }) async {
     await _ensureInitialized();
-    final localPath = await getModelPath(modelName);
+    final localPath = await getModelPath(localName ?? modelName);
 
     if (await File(localPath).exists()) {
       _logger.info('Model already exists: $localPath');
@@ -243,6 +247,14 @@ class ModelPresets {
       embeddingDim: 768,
       localName: 'siglip_base_patch16_256',
     ),
+    'siglip-base-patch16-256-text': ModelConfig(
+      modelId: 'google/siglip-base-patch16-256',
+      filename: 'onnx/text_model.onnx',
+      description: 'SigLIP Base Patch16 256 Text Encoder - Compatible text embeddings for semantic search',
+      inputSize: 0, // N/A for text encoder
+      embeddingDim: 768,
+      localName: 'siglip_text_encoder_256',
+    ),
     'clip-vit-base-patch32': ModelConfig(
       modelId: 'openai/clip-vit-base-patch32',
       filename: 'onnx/model.onnx',
@@ -250,6 +262,14 @@ class ModelPresets {
       inputSize: 224,
       embeddingDim: 512,
       localName: 'clip_vit_base_patch32',
+    ),
+    'clip-vit-base-patch32-text': ModelConfig(
+      modelId: 'openai/clip-vit-base-patch32',
+      filename: 'onnx/text_model.onnx',
+      description: 'CLIP ViT-B/32 Text Encoder - Compatible text embeddings for semantic search',
+      inputSize: 0, // N/A for text encoder
+      embeddingDim: 512,
+      localName: 'clip_text_encoder',
     ),
     'mobileclip-s1': ModelConfig(
       modelId: 'apple/MobileCLIP_S1',
@@ -259,6 +279,14 @@ class ModelPresets {
       embeddingDim: 512,
       localName: 'mobileclip_s1',
     ),
+    'mobileclip-s1-text': ModelConfig(
+      modelId: 'apple/MobileCLIP_S1',
+      filename: 'onnx/text_model.onnx',
+      description: 'MobileCLIP S1 Text Encoder - Compatible text embeddings for semantic search',
+      inputSize: 0, // N/A for text encoder
+      embeddingDim: 512,
+      localName: 'mobileclip_s1_text_encoder',
+    ),
     'mobileclip-s2': ModelConfig(
       modelId: 'apple/MobileCLIP_S2',
       filename: 'onnx/model.onnx',
@@ -266,6 +294,14 @@ class ModelPresets {
       inputSize: 224,
       embeddingDim: 512,
       localName: 'mobileclip_s2',
+    ),
+    'mobileclip-s2-text': ModelConfig(
+      modelId: 'apple/MobileCLIP_S2',
+      filename: 'onnx/text_model.onnx',
+      description: 'MobileCLIP S2 Text Encoder - Compatible text embeddings for semantic search',
+      inputSize: 0, // N/A for text encoder
+      embeddingDim: 512,
+      localName: 'mobileclip_s2_text_encoder',
     ),
 
     // Object detection models (YOLOv8)

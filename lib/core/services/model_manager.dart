@@ -40,6 +40,7 @@ class ModelManager {
     return downloader.downloadModel(
       modelId: config.modelId,
       filename: config.filename,
+      localName: config.resolvedLocalName,
       progressCallback: progressCallback,
     );
   }

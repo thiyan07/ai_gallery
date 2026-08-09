@@ -351,12 +351,12 @@ class LocalEmbeddingProvider implements EmbeddingProvider {
     await _ensureInitialized();
 
     if (_textSession == null) {
-      _logger.warning(
-        'Text encoder not available, using fallback embedding. '
-        'Add a text encoder ONNX model for production.',
+      throw StateError(
+        'Text encoder model not available. '
+        'Please download the text encoder model (siglip-base-patch16-224-text) '
+        'from Settings > AI Models, or ensure the bundled text encoder asset is available. '
+        'Without the text encoder, semantic search cannot generate query embeddings.',
       );
-      // Fallback: deterministic pseudo-embedding from text hash
-      return _fallbackTextEmbedding(text);
     }
 
     try {
@@ -408,36 +408,9 @@ class LocalEmbeddingProvider implements EmbeddingProvider {
       _logger.info('Generated text embedding for: "$text" (dim: ${normalized.length})');
       return Float32List.fromList(normalized);
     } catch (e, st) {
-      _logger.error('Failed to generate text embedding, using fallback', error: e, stackTrace: st);
-      return _fallbackTextEmbedding(text);
+      _logger.error('Failed to generate text embedding', error: e, stackTrace: st);
+      rethrow;
     }
-  }
-
-  /// Fallback text embedding using hash-based deterministic generation.
-  Float32List _fallbackTextEmbedding(String text) {
-    final hash = _hashText(text);
-    final dim = _getEmbeddingDimension();
-    final random = List.generate(dim, (i) => sin((hash + i) * 0.123456));
-    final normalized = _l2Normalize(Float32List.fromList(random));
-    return Float32List.fromList(normalized);
-  }
-
-  /// Get embedding dimension for current model.
-  int _getEmbeddingDimension() {
-    final preset = _determinePreset();
-    return switch (preset) {
-      'siglip-base-patch16-224' || 'siglip-base-patch16-256' => 768,
-      _ => 512, // CLIP and MobileCLIP variants
-    };
-  }
-
-  /// Simple string hash for deterministic pseudo-embedding.
-  int _hashText(String text) {
-    int hash = 0;
-    for (final codeUnit in text.codeUnits) {
-      hash = (hash * 31 + codeUnit) & 0x7FFFFFFF;
-    }
-    return hash;
   }
 
   /// Preprocess image bytes to model input tensor [1, 3, H, W].

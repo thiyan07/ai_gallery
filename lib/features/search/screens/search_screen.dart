@@ -49,6 +49,7 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
     final query = ref.watch(searchQueryProvider);
     final resultsAsync = ref.watch(searchResultsProvider);
     final parsedQueryAsync = ref.watch(parsedQueryProvider);
+    final semanticAvailableAsync = ref.watch(semanticSearchAvailableProvider);
 
     return Scaffold(
       appBar: AppBar(
@@ -107,10 +108,11 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
                     onVoiceSearch: () {
                       // TODO: Implement voice search
                     },
+                    semanticAvailable: semanticAvailableAsync.value ?? false,
                   );
                 }
                 if (results.isEmpty) {
-                  return _buildNoResults(context, query);
+                  return _buildNoResults(context, query, semanticAvailable: semanticAvailableAsync.value ?? true);
                 }
                 return _buildResultsGrid(theme, results);
               },
@@ -497,6 +499,52 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
   }
 
   Widget _buildErrorState(BuildContext context, String error) {
+    final isModelNotReady = error.contains('MODEL_NOT_READY');
+    final theme = Theme.of(context);
+
+    if (isModelNotReady) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(32),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                Icons.psychology_outlined,
+                size: 64,
+                color: theme.colorScheme.primary,
+              ),
+              const SizedBox(height: 16),
+              Text(
+                'AI Model Required',
+                style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'Semantic search requires a local AI model. Please download the model from Settings.',
+                textAlign: TextAlign.center,
+                style: TextStyle(color: theme.colorScheme.onSurfaceVariant),
+              ),
+              const SizedBox(height: 24),
+              FilledButton.icon(
+                icon: const Icon(Icons.download),
+                label: const Text('Open AI Models'),
+                onPressed: () {
+                  Navigator.of(context).pushNamed('/settings/local-models');
+                },
+              ),
+              const SizedBox(height: 12),
+              OutlinedButton.icon(
+                icon: const Icon(Icons.refresh),
+                label: const Text('Retry'),
+                onPressed: () => ref.invalidate(searchResultsProvider),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(32),
@@ -506,15 +554,12 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
             Icon(
               Icons.error_outline,
               size: 64,
-              color: Theme.of(context).colorScheme.error,
+              color: theme.colorScheme.error,
             ),
             const SizedBox(height: 16),
             Text(
               'Search Failed',
-              style: Theme.of(context)
-                  .textTheme
-                  .titleLarge
-                  ?.copyWith(fontWeight: FontWeight.bold),
+              style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold),
             ),
             const SizedBox(height: 8),
             Text(error, textAlign: TextAlign.center),
@@ -530,7 +575,53 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
     );
   }
 
-  Widget _buildNoResults(BuildContext context, String query) {
+  Widget _buildNoResults(BuildContext context, String query, {bool semanticAvailable = true}) {
+    final theme = Theme.of(context);
+
+    // If semantic search is not available, show model required state
+    if (!semanticAvailable) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(32),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                Icons.psychology_outlined,
+                size: 64,
+                color: theme.colorScheme.primary,
+              ),
+              const SizedBox(height: 16),
+              Text(
+                'AI Model Required',
+                style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'Semantic search requires a local AI model. Please download the model from Settings.',
+                textAlign: TextAlign.center,
+                style: TextStyle(color: theme.colorScheme.onSurfaceVariant),
+              ),
+              const SizedBox(height: 24),
+              FilledButton.icon(
+                icon: const Icon(Icons.download),
+                label: const Text('Open AI Models'),
+                onPressed: () {
+                  Navigator.of(context).pushNamed('/settings/local-models');
+                },
+              ),
+              const SizedBox(height: 12),
+              OutlinedButton.icon(
+                icon: const Icon(Icons.refresh),
+                label: const Text('Retry'),
+                onPressed: () => ref.invalidate(searchResultsProvider),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(32),
@@ -540,24 +631,18 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
             Icon(
               Icons.search_off,
               size: 64,
-              color: Theme.of(context)
-                  .colorScheme
-                  .onSurfaceVariant
-                  .withValues(alpha: 0.5),
+              color: theme.colorScheme.onSurfaceVariant.withValues(alpha: 0.5),
             ),
             const SizedBox(height: 16),
             Text(
               'No results for "$query"',
-              style: Theme.of(context)
-                  .textTheme
-                  .titleLarge
-                  ?.copyWith(fontWeight: FontWeight.bold),
+              style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold),
             ),
             const SizedBox(height: 8),
             Text(
               'Try different keywords or check your spelling.',
               textAlign: TextAlign.center,
-              style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant),
+              style: TextStyle(color: theme.colorScheme.onSurfaceVariant),
             ),
           ],
         ),
@@ -568,8 +653,55 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
   Widget _buildEmptySearchView({
     required VoidCallback onCameraSearch,
     required VoidCallback onVoiceSearch,
+    required bool semanticAvailable,
   }) {
     final theme = Theme.of(context);
+
+    // If semantic search is not available, show model required state
+    if (!semanticAvailable) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(32),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                Icons.psychology_outlined,
+                size: 64,
+                color: theme.colorScheme.primary,
+              ),
+              const SizedBox(height: 16),
+              Text(
+                'AI Model Required for Semantic Search',
+                style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'Download a local AI model to enable natural language photo search.',
+                textAlign: TextAlign.center,
+                style: TextStyle(color: theme.colorScheme.onSurfaceVariant),
+              ),
+              const SizedBox(height: 24),
+              FilledButton.icon(
+                icon: const Icon(Icons.download),
+                label: const Text('Open AI Models'),
+                onPressed: () {
+                  Navigator.of(context).pushNamed('/settings/local-models');
+                },
+              ),
+              const SizedBox(height: 12),
+              OutlinedButton.icon(
+                icon: const Icon(Icons.refresh),
+                label: const Text('Check Again'),
+                onPressed: () => ref.invalidate(semanticSearchAvailableProvider),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(32),

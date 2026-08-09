@@ -143,6 +143,7 @@ class OnboardingNotifier extends Notifier<OnboardingState> {
     ref.read(di_providers.modelDownloaderProvider).downloadModel(
       modelId: 'google/siglip-base-patch16-224',
       filename: 'onnx/model.onnx',
+      localName: 'siglip_base_patch16_224',
       progressCallback: (progress) {
         // Could update UI with progress if needed
       },

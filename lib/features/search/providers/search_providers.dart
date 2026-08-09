@@ -11,6 +11,14 @@ import 'package:ai_gallery/features/search/services/ranking_engine.dart';
 import 'package:ai_gallery/features/search/services/search_suggestion_service.dart';
 
 // ─────────────────────────────────────────────
+// Re-export embedding provider from core/di/providers.dart
+// ───────────────────────
+
+/// Re-export the embedding provider from core/di/providers.dart
+/// This supports local, BYOK, and hybrid modes with cloud fallback.
+export 'package:ai_gallery/core/di/providers.dart' show embeddingProviderProvider;
+
+// ─────────────────────────────────────────────
 // Re-export types from search_service
 // ─────────────────────────────────────────────
 
@@ -21,7 +29,7 @@ export '../services/search_suggestion_service.dart' show SearchSuggestionService
 
 // ─────────────────────────────────────────────
 // Natural Language Parser Provider
-// ─────────────────────────────────────────────
+// ────────────
 
 /// Natural language query parser provider.
 final naturalLanguageParserProvider = Provider<NaturalLanguageParser>((ref) {
@@ -71,38 +79,6 @@ final searchSuggestionServiceProvider = Provider<SearchSuggestionService>((ref) 
   return service;
 });
 
-// ─────────────────────────────────────────────
-// Embedding Provider (uses core/providers.dart)
-// ─────────────────────────────────────────────
-
-/// Local embedding provider (ONNX Runtime + SigLIP/CLIP).
-/// This uses a FutureProvider to asynchronously create the provider
-/// based on user settings.
-final embeddingProviderProvider = FutureProvider<EmbeddingProvider?>((ref) async {
-  final logger = ref.watch(appLoggerProvider);
-  final settings = ref.watch(userSettingsProvider);
-  final modelManager = ref.watch(modelManagerProvider);
-
-  if (settings.aiMode == AiMode.local) {
-    return LocalEmbeddingProvider(
-      logger: logger,
-      modelManager: modelManager,
-    );
-  }
-
-  // TODO: Add cloud providers (OpenAI, Google Vision, Anthropic)
-  // For hybrid/BYOK modes, return appropriate cloud provider
-  // if (settings.aiMode == AiMode.byok || settings.aiMode == AiMode.hybrid) {
-  //   return CloudEmbeddingProvider(...);
-  // }
-
-  return null;
-});
-
-// ─────────────────────────────────────────────
-// Search Service
-// ─────────────────────────────────────────────
-
 /// Search service for semantic/text search.
 /// Uses requireValue on the async providers to get the resolved values.
 final searchServiceProvider = Provider<SearchService>((ref) {
@@ -116,6 +92,19 @@ final searchServiceProvider = Provider<SearchService>((ref) {
     database: database,
     rankingEngine: rankingEngine,
     suggestionService: suggestionService,
+  );
+});
+
+/// Provider to check if semantic search is available (model loaded and ready).
+final semanticSearchAvailableProvider = FutureProvider<bool>((ref) async {
+  final embeddingProviderAsync = ref.watch(embeddingProviderProvider);
+  return embeddingProviderAsync.when(
+    data: (provider) async {
+      if (provider == null) return false;
+      return provider.isAvailable;
+    },
+    loading: () => false,
+    error: (_, __) => false,
   );
 });
 
@@ -150,10 +139,23 @@ final searchResultsProvider = FutureProvider<List<RankedSearchResult>>((ref) asy
   final parsedQueryAsync = ref.watch(parsedQueryProvider);
   // Also watch manual filters
   final manualFilters = ref.watch(searchFiltersProvider);
+  // Check if semantic search is available
+  final semanticAvailableAsync = ref.watch(semanticSearchAvailableProvider);
 
   return parsedQueryAsync.when(
     data: (parsedQuery) async {
       if (parsedQuery.semanticQuery.trim().isEmpty) return [];
+
+      // Check if semantic search is available (model loaded)
+      final available = await semanticAvailableAsync.when(
+        data: (value) => value,
+        loading: () => false,
+        error: (_, __) => false,
+      );
+      if (!available) {
+        // Throw a specific error that the UI can catch and display
+        throw StateError('MODEL_NOT_READY: Semantic search model is not available. Please download the required AI model from Settings > AI Models.');
+      }
 
       // Combine parsed filters with manual filters
       final combinedFilters = parsedQuery.filters.copyWith(
