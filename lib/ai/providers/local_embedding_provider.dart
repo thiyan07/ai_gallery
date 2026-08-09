@@ -83,6 +83,12 @@ class LocalEmbeddingProvider implements EmbeddingProvider {
   /// Get the resolved input size for the current model.
   int get inputSize => _resolvedInputSize ?? _determineInputSize();
 
+  /// Get the vision ONNX session (for testing/diagnostics).
+  OrtSession? get visionSession => _visionSession;
+
+  /// Get the text ONNX session (for testing/diagnostics).
+  OrtSession? get textSession => _textSession;
+
   @override
   String get id => 'local_$modelPreset';
 
@@ -270,9 +276,10 @@ class LocalEmbeddingProvider implements EmbeddingProvider {
       _vocabSize = _tokenizer!.vocabSize;
       _logger.info('SentencePiece tokenizer loaded (vocab size: $_vocabSize)');
     } catch (e, st) {
-      _logger.warning('Failed to load SentencePiece tokenizer, using fallback: $e', error: e, stackTrace: st);
+      _logger.error('Failed to load SentencePiece tokenizer', error: e, stackTrace: st);
       _tokenizer = null;
-      _vocabSize = 32000; // Default CLIP/SigLIP vocab size
+      _vocabSize = 0;
+      rethrow;
     }
   }
 
@@ -281,9 +288,11 @@ class LocalEmbeddingProvider implements EmbeddingProvider {
   /// Tokenize text using SentencePiece tokenizer (CLIP/SigLIP compatible).
   List<int> _tokenize(String text) {
     if (_tokenizer == null) {
-      // Fallback to hash-based tokenization
-      final words = text.toLowerCase().split(RegExp(r'[\s\p{P}]+')).where((w) => w.isNotEmpty).toList();
-      return words.map((w) => w.hashCode.abs() % _vocabSize).toList();
+      throw StateError(
+        'SentencePiece tokenizer not available. '
+        'Please ensure the tokenizer model (siglip_tokenizer.model) is available in assets/models/. '
+        'Without the tokenizer, semantic text search cannot generate valid query embeddings.',
+      );
     }
 
     // Use proper SentencePiece tokenizer with CLIP config (BOS + EOS)
@@ -481,9 +490,7 @@ class LocalEmbeddingProvider implements EmbeddingProvider {
       return OrtValueTensor.createTensorWithDataList(input, [1, 3, size, size]);
     } catch (e, st) {
       _logger.error('Image preprocessing failed', error: e, stackTrace: st);
-      // Return dummy tensor as fallback (will produce meaningless embedding)
-      final dummyData = Float32List(3 * inputSize * inputSize);
-      return OrtValueTensor.createTensorWithDataList(dummyData, [1, 3, inputSize, inputSize]);
+      rethrow;
     }
   }
 

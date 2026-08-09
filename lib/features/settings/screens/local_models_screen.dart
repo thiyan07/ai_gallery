@@ -210,7 +210,7 @@ class _LocalModelsScreenState extends ConsumerState<LocalModelsScreen> {
     AppLogger logger,
   ) {
     final preset = ModelPresets.presets.entries
-        .where((e) => e.value.localName == model.name)
+        .where((e) => e.value.resolvedLocalName == model.name)
         .map((e) => e.value)
         .firstOrNull;
 
@@ -297,8 +297,8 @@ class _LocalModelsScreenState extends ConsumerState<LocalModelsScreen> {
     ModelManager modelManager,
     AppLogger logger,
   ) {
-    final isInstalled = downloadedModels.any((m) => m.name == preset.localName);
-    final isDownloading = modelManager.selectedModel == preset.localName;
+    final isInstalled = downloadedModels.any((m) => m.name == preset.resolvedLocalName);
+    final isDownloading = modelManager.selectedModel == preset.resolvedLocalName;
 
     return Card(
       margin: const EdgeInsets.only(bottom: 12),
@@ -464,7 +464,7 @@ class _LocalModelsScreenState extends ConsumerState<LocalModelsScreen> {
     // Show progress dialog
     if (!context.mounted) return;
 
-    modelManager.selectModel(preset.modelId.replaceAll('/', '_'));
+    modelManager.selectModel(preset.resolvedLocalName);
 
     showDialog(
       context: context,

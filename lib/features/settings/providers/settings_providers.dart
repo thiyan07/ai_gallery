@@ -103,10 +103,10 @@ class ModelManagementNotifier extends Notifier<ModelManagementState> {
   }
 
   Future<void> downloadModel(ModelConfig preset) async {
-    state = state.copyWith(downloadingModel: preset.localName, downloadProgress: 0.0);
+    state = state.copyWith(downloadingModel: preset.resolvedLocalName, downloadProgress: 0.0);
     try {
       final modelManager = ref.read(di_providers.modelManagerProvider);
-      modelManager.selectModel(preset.modelId.replaceAll('/', '_'));
+      modelManager.selectModel(preset.resolvedLocalName);
 
       await modelManager.getSelectedModelPath(progressCallback: (progress) {
         state = state.copyWith(downloadProgress: progress);
