@@ -6,9 +6,9 @@ import '../providers/selection_provider.dart';
 import '../widgets/photo_tile.dart';
 import '../widgets/bulk_action_bar.dart';
 import '../../settings/screens/settings_screen.dart';
+import '../../settings/screens/local_models_screen.dart';
 import 'favorites_screen.dart';
 import '../../search/search.dart';
-import '../../people/providers/people_providers.dart';
 import '../../people/screens/people_screen.dart';
 
 /// Root shell with bottom navigation: Gallery | Favorites | People | Settings.
@@ -167,6 +167,18 @@ class _GalleryTabState extends ConsumerState<_GalleryTab>
           ] else ...[
             // Grid size slider button
             _GridSizeButton(gridSize: gridSize),
+            // Model recommendation button
+            IconButton(
+              icon: const Icon(Icons.memory),
+              tooltip: 'Recommended AI Model',
+              onPressed: () {
+                Navigator.of(context).push(
+                  MaterialPageRoute(
+                    builder: (_) => const LocalModelsScreen(),
+                  ),
+                );
+              },
+            ),
             IconButton(
               icon: const Icon(Icons.search),
               onPressed: () {
@@ -405,7 +417,7 @@ class _PinchZoomGrid extends ConsumerStatefulWidget {
   final ScrollController scrollController;
   final bool loadingMore;
   final VoidCallback? onLoadMore;
-  final VoidCallback? onRefresh;
+  final RefreshCallback? onRefresh;
 
   const _PinchZoomGrid({
     required this.photoList,
@@ -422,35 +434,30 @@ class _PinchZoomGrid extends ConsumerStatefulWidget {
 
 class _PinchZoomGridState extends ConsumerState<_PinchZoomGrid> with TickerProviderStateMixin {
   late AnimationController _gridAnimationController;
-  late Animation<int> _gridSizeAnimation;
   late AnimationController _overlayAnimationController;
   late Animation<double> _overlayOpacityAnimation;
   late Animation<double> _overlayScaleAnimation;
 
-  int _currentGridSize = 3;
-  int _targetGridSize = 3;
-  double _pinchScale = 1.0;
-  double _lastPinchScale = 1.0;
+  // Grid sizes: [2, 3, 4, 5, 6] mapped to indices 0-4
+  static const List<int> _gridSizes = [2, 3, 4, 5, 6];
+
+  int _currentGridSizeIndex = 1; // Default to 3 columns (index 1)
+  int _targetGridSizeIndex = 1;
+  double _initialPinchScale = 1.0;
+  double _currentPinchScale = 1.0;
   bool _isPinching = false;
-  static const double _pinchSensitivity = 0.4;
 
   @override
   void initState() {
     super.initState();
-    _currentGridSize = widget.initialGridSize;
-    _targetGridSize = widget.initialGridSize;
+    _currentGridSizeIndex = _gridSizes.indexOf(widget.initialGridSize.clamp(2, 6));
+    if (_currentGridSizeIndex < 0) _currentGridSizeIndex = 1; // Default to 3
+    _targetGridSizeIndex = _currentGridSizeIndex;
 
     _gridAnimationController = AnimationController(
       duration: const Duration(milliseconds: 300),
       vsync: this,
     );
-    _gridSizeAnimation = IntTween(
-      begin: _currentGridSize,
-      end: _targetGridSize,
-    ).animate(CurvedAnimation(
-      parent: _gridAnimationController,
-      curve: Curves.easeOutCubic,
-    ));
 
     _overlayAnimationController = AnimationController(
       duration: const Duration(milliseconds: 200),
@@ -463,14 +470,17 @@ class _PinchZoomGridState extends ConsumerState<_PinchZoomGrid> with TickerProvi
       CurvedAnimation(parent: _overlayAnimationController, curve: Curves.easeOutBack),
     );
 
-    _gridAnimationController.addListener(_onGridAnimationTick);
+    _gridAnimationController.addStatusListener((status) => _onGridAnimationStatus(status));
   }
 
-  void _onGridAnimationTick() {
-    if (mounted) {
-      setState(() {
-        _currentGridSize = _gridSizeAnimation.value;
-      });
+  void _onGridAnimationStatus(AnimationStatus status) {
+    if (status == AnimationStatus.completed) {
+      // Update the current index to target once animation completes
+      if (mounted) {
+        setState(() {
+          _currentGridSizeIndex = _targetGridSizeIndex;
+        });
+      }
     }
   }
 
@@ -478,38 +488,34 @@ class _PinchZoomGridState extends ConsumerState<_PinchZoomGrid> with TickerProvi
   void didUpdateWidget(_PinchZoomGrid oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.initialGridSize != widget.initialGridSize &&
-        _targetGridSize == _currentGridSize) {
-      _animateToGridSize(widget.initialGridSize);
+        _targetGridSizeIndex == _currentGridSizeIndex) {
+      final newIndex = _gridSizes.indexOf(widget.initialGridSize.clamp(2, 6));
+      if (newIndex >= 0) {
+        _animateToGridSizeIndex(newIndex);
+      }
     }
   }
 
   @override
   void dispose() {
-    _gridAnimationController.removeListener(_onGridAnimationTick);
+    _gridAnimationController.removeStatusListener(_onGridAnimationStatus);
     _gridAnimationController.dispose();
     _overlayAnimationController.dispose();
     super.dispose();
   }
 
-  void _animateToGridSize(int targetSize) {
-    if (targetSize == _targetGridSize) return;
+  void _animateToGridSizeIndex(int targetIndex) {
+    if (targetIndex == _targetGridSizeIndex) return;
 
-    _targetGridSize = targetSize.clamp(2, 6);
+    _targetGridSizeIndex = targetIndex.clamp(0, _gridSizes.length - 1);
     _gridAnimationController.reset();
-    _gridSizeAnimation = IntTween(
-      begin: _currentGridSize,
-      end: _targetGridSize,
-    ).animate(CurvedAnimation(
-      parent: _gridAnimationController,
-      curve: Curves.easeOutCubic,
-    ));
     _gridAnimationController.forward();
 
     // Show overlay with new grid size
     _showOverlay();
 
     // Persist the new grid size
-    ref.read(gridSizeProvider.notifier).setSize(_targetGridSize);
+    ref.read(gridSizeProvider.notifier).setSize(_gridSizes[_targetGridSizeIndex]);
   }
 
   void _showOverlay() {
@@ -523,30 +529,41 @@ class _PinchZoomGridState extends ConsumerState<_PinchZoomGrid> with TickerProvi
   }
 
   void _handleScaleStart(ScaleStartDetails details) {
-    _lastPinchScale = 1.0;
+    _initialPinchScale = 1.0;
+    _currentPinchScale = 1.0;
     _isPinching = true;
     _overlayAnimationController.forward();
   }
 
   void _handleScaleUpdate(ScaleUpdateDetails details) {
-    _pinchScale = details.scale;
+    _currentPinchScale = details.scale;
 
-    // Calculate the target grid size based on pinch
-    final scaleDelta = (_pinchScale - _lastPinchScale) * _pinchSensitivity;
+    // Calculate scale relative to initial pinch position
+    // A pinch out (scale > initial) increases grid size (fewer columns)
+    // A pinch in (scale < initial) decreases grid size (more columns)
+    final scaleRatio = _currentPinchScale / _initialPinchScale;
 
-    // Find the closest grid size
-    double normalizedScale = (_targetGridSize - 3) + scaleDelta * 4;
-    int newTarget = (normalizedScale + 3).round().clamp(2, 6);
+    // Map scale ratio to grid size index change
+    // scaleRatio > 1.25 -> decrease index (fewer columns, zoom in)
+    // scaleRatio < 0.8 -> increase index (more columns, zoom out)
+    // This gives roughly 25% threshold between grid size steps
+    int newTargetIndex = _targetGridSizeIndex;
 
-    if (newTarget != _targetGridSize) {
-      _animateToGridSize(newTarget);
-      _lastPinchScale = _pinchScale;
+    if (scaleRatio > 1.25 && _targetGridSizeIndex > 0) {
+      newTargetIndex = _targetGridSizeIndex - 1;
+    } else if (scaleRatio < 0.8 && _targetGridSizeIndex < _gridSizes.length - 1) {
+      newTargetIndex = _targetGridSizeIndex + 1;
+    }
+
+    if (newTargetIndex != _targetGridSizeIndex) {
+      _animateToGridSizeIndex(newTargetIndex);
+      _initialPinchScale = _currentPinchScale; // Reset baseline
     }
   }
 
   void _handleScaleEnd(ScaleEndDetails details) {
-    _pinchScale = 1.0;
-    _lastPinchScale = 1.0;
+    _currentPinchScale = 1.0;
+    _initialPinchScale = 1.0;
     _isPinching = false;
     _overlayAnimationController.reverse();
   }
@@ -554,6 +571,7 @@ class _PinchZoomGridState extends ConsumerState<_PinchZoomGrid> with TickerProvi
   @override
   Widget build(BuildContext context) {
     final photoList = widget.photoList;
+    final currentGridSize = _gridSizes[_currentGridSizeIndex];
 
     return GestureDetector(
       onScaleStart: _handleScaleStart,
@@ -561,41 +579,36 @@ class _PinchZoomGridState extends ConsumerState<_PinchZoomGrid> with TickerProvi
       onScaleEnd: _handleScaleEnd,
       child: Stack(
         children: [
-          AnimatedBuilder(
-            animation: _gridAnimationController,
-            builder: (context, child) {
-              return RefreshIndicator(
-                onRefresh: widget.onRefresh == null
-                    ? () async {}
-                    : () => Future<void>.value(),
-                child: GridView.builder(
-                  controller: widget.scrollController,
-                  padding: const EdgeInsets.all(2),
-                  gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                    crossAxisCount: _currentGridSize,
-                    crossAxisSpacing: 2,
-                    mainAxisSpacing: 2,
-                  ),
-                  itemCount: photoList.length + (widget.loadingMore ? 1 : 0),
-                  itemBuilder: (context, index) {
-                    if (index == photoList.length) {
-                      return const Center(
-                        child: Padding(
-                          padding: EdgeInsets.all(8.0),
-                          child: CircularProgressIndicator(),
-                        ),
-                      );
-                    }
-                    return _AnimatedPhotoTile(
-                      asset: photoList[index],
-                      allAssets: photoList,
-                      index: index,
-                      gridSize: _currentGridSize,
-                    );
-                  },
-                ),
-              );
-            },
+          RefreshIndicator(
+            onRefresh: widget.onRefresh ?? (() async {
+                  await Future<void>.delayed(const Duration(milliseconds: 300));
+                }),
+            child: GridView.builder(
+              controller: widget.scrollController,
+              padding: const EdgeInsets.all(2),
+              gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                crossAxisCount: currentGridSize,
+                crossAxisSpacing: 2,
+                mainAxisSpacing: 2,
+              ),
+              itemCount: photoList.length + (widget.loadingMore ? 1 : 0),
+              itemBuilder: (context, index) {
+                if (index == photoList.length) {
+                  return const Center(
+                    child: Padding(
+                      padding: EdgeInsets.all(8.0),
+                      child: CircularProgressIndicator(),
+                    ),
+                  );
+                }
+                return _AnimatedPhotoTile(
+                  asset: photoList[index],
+                  allAssets: photoList,
+                  index: index,
+                  gridSize: currentGridSize,
+                );
+              },
+            ),
           ),
 
           // Grid size indicator overlay
@@ -630,7 +643,7 @@ class _PinchZoomGridState extends ConsumerState<_PinchZoomGrid> with TickerProvi
                           ),
                           const SizedBox(height: 8),
                           Text(
-                            '$_targetGridSize Columns',
+                            '${_gridSizes[_targetGridSizeIndex]} Columns',
                             style: Theme.of(context).textTheme.titleLarge?.copyWith(
                               color: Theme.of(context).colorScheme.onInverseSurface,
                               fontWeight: FontWeight.bold,
@@ -640,7 +653,7 @@ class _PinchZoomGridState extends ConsumerState<_PinchZoomGrid> with TickerProvi
                           // Visual column indicator
                           Row(
                             mainAxisSize: MainAxisSize.min,
-                            children: List.generate(_targetGridSize, (i) {
+                            children: List.generate(_gridSizes[_targetGridSizeIndex], (i) {
                               return Container(
                                 margin: const EdgeInsets.symmetric(horizontal: 2),
                                 width: 8,

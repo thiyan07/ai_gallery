@@ -75,8 +75,16 @@ class ModelDownloader {
       final request = http.Request('GET', Uri.parse(url));
       final response = await client.send(request);
 
-      if (response.statusCode != 200) {
-        throw HttpException('Failed to download model: ${response.statusCode}');
+      if (response.statusCode == 404) {
+        throw HttpException('Model file not found on Hugging Face ($modelId/$filename). '
+            'The model repo might not have this ONNX file, or it may require authentication. '
+            'Status: 404 Not Found');
+      } else if (response.statusCode == 401 || response.statusCode == 403) {
+        throw HttpException('Access denied downloading from Hugging Face ($modelId/$filename). '
+            'This model may require authentication or be gated. '
+            'Status: ${response.statusCode}');
+      } else if (response.statusCode != 200) {
+        throw HttpException('Failed to download model from $url: ${response.statusCode}');
       }
 
       final contentLength = response.contentLength ?? 0;
@@ -127,8 +135,12 @@ class ModelDownloader {
       final request = http.Request('GET', Uri.parse(url));
       final response = await client.send(request);
 
-      if (response.statusCode != 200) {
-        throw HttpException('Failed to download model: ${response.statusCode}');
+      if (response.statusCode == 404) {
+        throw HttpException('Model file not found at URL ($url). Status: 404 Not Found');
+      } else if (response.statusCode == 401 || response.statusCode == 403) {
+        throw HttpException('Access denied downloading from $url. Status: ${response.statusCode}');
+      } else if (response.statusCode != 200) {
+        throw HttpException('Failed to download model from $url: ${response.statusCode}');
       }
 
       final contentLength = response.contentLength ?? 0;
@@ -255,6 +267,38 @@ class ModelPresets {
       embeddingDim: 768,
       localName: 'siglip_text_encoder_256',
     ),
+    'mobileclip-s1': ModelConfig(
+      modelId: 'onnx-community/mobileclip_s1',
+      filename: 'model.onnx',
+      description: 'MobileCLIP S1 - Fast mobile-optimized',
+      inputSize: 224,
+      embeddingDim: 512,
+      localName: 'mobileclip_s1',
+    ),
+    'mobileclip-s1-text': ModelConfig(
+      modelId: 'onnx-community/mobileclip_s1',
+      filename: 'text_model.onnx',
+      description: 'MobileCLIP S1 Text Encoder - Compatible text embeddings for semantic search',
+      inputSize: 0, // N/A for text encoder
+      embeddingDim: 512,
+      localName: 'mobileclip_s1_text_encoder',
+    ),
+    'mobileclip-s2': ModelConfig(
+      modelId: 'onnx-community/mobileclip_s2',
+      filename: 'model.onnx',
+      description: 'MobileCLIP S2 - Better quality mobile',
+      inputSize: 224,
+      embeddingDim: 512,
+      localName: 'mobileclip_s2',
+    ),
+    'mobileclip-s2-text': ModelConfig(
+      modelId: 'onnx-community/mobileclip_s2',
+      filename: 'text_model.onnx',
+      description: 'MobileCLIP S2 Text Encoder - Compatible text embeddings for semantic search',
+      inputSize: 0, // N/A for text encoder
+      embeddingDim: 512,
+      localName: 'mobileclip_s2_text_encoder',
+    ),
     'clip-vit-base-patch32': ModelConfig(
       modelId: 'openai/clip-vit-base-patch32',
       filename: 'onnx/model.onnx',
@@ -270,38 +314,6 @@ class ModelPresets {
       inputSize: 0, // N/A for text encoder
       embeddingDim: 512,
       localName: 'clip_text_encoder',
-    ),
-    'mobileclip-s1': ModelConfig(
-      modelId: 'apple/MobileCLIP_S1',
-      filename: 'onnx/model.onnx',
-      description: 'MobileCLIP S1 - Fast mobile-optimized',
-      inputSize: 224,
-      embeddingDim: 512,
-      localName: 'mobileclip_s1',
-    ),
-    'mobileclip-s1-text': ModelConfig(
-      modelId: 'apple/MobileCLIP_S1',
-      filename: 'onnx/text_model.onnx',
-      description: 'MobileCLIP S1 Text Encoder - Compatible text embeddings for semantic search',
-      inputSize: 0, // N/A for text encoder
-      embeddingDim: 512,
-      localName: 'mobileclip_s1_text_encoder',
-    ),
-    'mobileclip-s2': ModelConfig(
-      modelId: 'apple/MobileCLIP_S2',
-      filename: 'onnx/model.onnx',
-      description: 'MobileCLIP S2 - Better quality mobile',
-      inputSize: 224,
-      embeddingDim: 512,
-      localName: 'mobileclip_s2',
-    ),
-    'mobileclip-s2-text': ModelConfig(
-      modelId: 'apple/MobileCLIP_S2',
-      filename: 'onnx/text_model.onnx',
-      description: 'MobileCLIP S2 Text Encoder - Compatible text embeddings for semantic search',
-      inputSize: 0, // N/A for text encoder
-      embeddingDim: 512,
-      localName: 'mobileclip_s2_text_encoder',
     ),
 
     // Object detection models (YOLOv8)

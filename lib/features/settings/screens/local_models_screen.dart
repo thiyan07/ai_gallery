@@ -4,6 +4,7 @@ import 'package:ai_gallery/core/di/providers.dart' as di_providers;
 import 'package:ai_gallery/core/services/model_manager.dart';
 import 'package:ai_gallery/core/services/model_downloader.dart';
 import 'package:ai_gallery/core/logging/app_logger.dart';
+import 'package:ai_gallery/core/utils/device_capabilities.dart';
 
 /// Screen for managing local embedding models.
 class LocalModelsScreen extends ConsumerStatefulWidget {
@@ -51,6 +52,10 @@ class _LocalModelsScreenState extends ConsumerState<LocalModelsScreen> {
             children: [
               // Header info
               _buildInfoCard(theme, downloadedModels.length, availablePresets.length),
+              const SizedBox(height: 16),
+
+              // Device-specific model recommendation
+              _buildDeviceRecommendationCard(theme, downloadedSnapshot, modelManager, logger),
               const SizedBox(height: 24),
 
               // Installed Models Section
@@ -132,6 +137,156 @@ class _LocalModelsScreenState extends ConsumerState<LocalModelsScreen> {
         ),
       ),
     );
+  }
+
+  /// Builds a card showing the recommended model for this device.
+  Widget _buildDeviceRecommendationCard(
+    ThemeData theme,
+    AsyncSnapshot<List<DownloadedModel>> downloadedSnapshot,
+    ModelManager modelManager,
+    AppLogger logger,
+  ) {
+    return FutureBuilder<DeviceCapabilities>(
+      future: DeviceCapabilities.instance,
+      builder: (context, snapshot) {
+        if (!snapshot.hasData) {
+          return const SizedBox.shrink();
+        }
+
+        final capabilities = snapshot.data!;
+        final isRecommendedInstalled = downloadedSnapshot.data?.any(
+              (m) => m.name == capabilities.recommendedModelPreset,
+            ) ??
+            false;
+
+        final recommendedPreset = ModelPresets.presets[capabilities.recommendedModelPreset];
+
+        return Card(
+          color: theme.colorScheme.primaryContainer.withValues(alpha: 0.5),
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Icon(
+                      Icons.smartphone,
+                      color: theme.colorScheme.primary,
+                      size: 24,
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Recommended for your device',
+                            style: theme.textTheme.titleMedium?.copyWith(
+                              fontWeight: FontWeight.bold,
+                              color: theme.colorScheme.primary,
+                            ),
+                          ),
+                          Text(
+                            '${capabilities.modelName} (${capabilities.tier.name})',
+                            style: theme.textTheme.bodySmall?.copyWith(
+                              color: theme.colorScheme.onSurfaceVariant,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    if (isRecommendedInstalled)
+                      Icon(
+                        Icons.check_circle,
+                        color: Colors.green,
+                        size: 24,
+                      )
+                    else
+                      FilledButton.icon(
+                        onPressed: () {
+                          if (recommendedPreset != null) {
+                            _downloadModel(recommendedPreset, modelManager, logger);
+                          }
+                        },
+                        icon: const Icon(Icons.download, size: 18),
+                        label: const Text('Install'),
+                        style: FilledButton.styleFrom(
+                          minimumSize: const Size(0, 36),
+                          padding: const EdgeInsets.symmetric(horizontal: 12),
+                        ),
+                      ),
+                  ],
+                ),
+                const SizedBox(height: 16),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    _buildDetailChip(
+                      theme,
+                      'Model: ${_getModelDisplayName(capabilities.recommendedModelPreset)}',
+                      Icons.model_training,
+                    ),
+                    _buildDetailChip(
+                      theme,
+                      '${capabilities.recommendedModelPreset.contains("256") ? "256" : "224"}px input',
+                      Icons.crop_free,
+                    ),
+                    _buildDetailChip(
+                      theme,
+                      '${_getEmbeddingDim(capabilities.recommendedModelPreset)}D embedding',
+                      Icons.table_chart,
+                    ),
+                    _buildDetailChip(
+                      theme,
+                      '~${capabilities.performanceMultiplier.toStringAsFixed(1)}x speed',
+                      Icons.speed,
+                    ),
+                    _buildDetailChip(
+                      theme,
+                      capabilities.useGpuDelegate ? 'GPU/NPU accelerated' : 'CPU only',
+                      capabilities.useGpuDelegate ? Icons.memory : Icons.memory_outlined,
+                    ),
+                    _buildDetailChip(
+                      theme,
+                      '${capabilities.maxBatchSize} batch',
+                      Icons.layers,
+                    ),
+                  ],
+                ),
+                if (recommendedPreset != null) ...[
+                  const SizedBox(height: 12),
+                  _buildModelDetails(theme, recommendedPreset),
+                ],
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  String _getModelDisplayName(String preset) {
+    return switch (preset) {
+      'mobileclip-s1' => 'MobileCLIP-S1 (Fastest, 512-dim)',
+      'mobileclip-s2' => 'MobileCLIP-S2 (Balanced, 512-dim)',
+      'siglip-base-patch16-224' => 'SigLIP-B/16-224 (Best Quality, 768-dim)',
+      'siglip-base-patch16-256' => 'SigLIP-B/16-256 (Highest Quality, 768-dim)',
+      'clip-vit-base-patch32' => 'CLIP-ViT-B/32 (512-dim)',
+      _ => preset,
+    };
+  }
+
+  int _getEmbeddingDim(String preset) {
+    return switch (preset) {
+      'mobileclip-s1' => 512,
+      'mobileclip-s2' => 512,
+      'siglip-base-patch16-224' => 768,
+      'siglip-base-patch16-256' => 768,
+      'clip-vit-base-patch32' => 512,
+      _ => 768,
+    };
   }
 
   Widget _buildStatChip(ThemeData theme, String value, String label, IconData icon, Color color) {

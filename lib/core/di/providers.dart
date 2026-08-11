@@ -229,9 +229,8 @@ final embeddingProviderProvider = FutureProvider<EmbeddingProvider?>((ref) async
       return LocalEmbeddingProvider(
         logger: logger,
         modelManager: modelManager,
-        modelAssetPath: 'assets/models/siglip_base_patch16_224.onnx',
-        textModelAssetPath: 'assets/models/siglip_text_encoder.onnx',
-        tokenizerAssetPath: 'assets/models/siglip_tokenizer.model',
+        // Don't pass asset paths - let LocalEmbeddingProvider handle tier-appropriate fallbacks
+        // This prevents loading huge SigLIP models on low/mid tier devices
       );
   }
 });

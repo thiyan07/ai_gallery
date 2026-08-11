@@ -22,6 +22,7 @@ import 'package:ai_gallery/domain/models/face_detection.dart';
 /// - Flagship: SigLIP Base Patch16-256 (highest quality, 768-dim)
 ///
 /// Supports models from Hugging Face Hub via ModelManager or bundled assets.
+/// IMPORTANT: Asset fallbacks are tier-aware to avoid OOM on low/mid devices.
 class LocalEmbeddingProvider implements EmbeddingProvider {
   /// Create a provider with automatic model selection based on device capabilities.
   ///
@@ -44,18 +45,18 @@ class LocalEmbeddingProvider implements EmbeddingProvider {
     DeviceTier? forceTier,
   })  : _logger = logger,
         _modelManager = modelManager,
-        _modelAssetPath = modelAssetPath ?? 'assets/models/siglip_base_patch16_224.onnx',
-        _textModelAssetPath = textModelAssetPath ?? 'assets/models/siglip_text_encoder.onnx',
-        _tokenizerAssetPath = tokenizerAssetPath ?? 'assets/models/siglip_tokenizer.model',
+        _modelAssetPath = modelAssetPath,
+        _textModelAssetPath = textModelAssetPath,
+        _tokenizerAssetPath = tokenizerAssetPath,
         _forcedPreset = modelPreset,
         _forcedTier = forceTier,
         _inputSize = inputSize;
 
   final AppLogger _logger;
   final ModelManager _modelManager;
-  final String _modelAssetPath;
-  final String _textModelAssetPath;
-  final String _tokenizerAssetPath;
+  final String? _modelAssetPath;
+  final String? _textModelAssetPath;
+  final String? _tokenizerAssetPath;
   final String? _forcedPreset;
   final DeviceTier? _forcedTier;
   final int? _inputSize;
@@ -132,7 +133,7 @@ class LocalEmbeddingProvider implements EmbeddingProvider {
       try {
         modelPath = await _modelManager.getSelectedModelPath();
       } catch (e) {
-        _logger.warning('ModelManager not initialized, falling back to assets: $e');
+        _logger.warning('ModelManager not initialized: $e');
       }
 
       Uint8List visionModelBytes;
@@ -143,9 +144,35 @@ class LocalEmbeddingProvider implements EmbeddingProvider {
         final file = File(modelPath);
         visionModelBytes = await file.readAsBytes();
       } else {
-        // Fallback to bundled asset
-        _logger.info('Loading ONNX vision model from assets: $_modelAssetPath');
-        visionModelBytes = await _loadModelFromAssets(_modelAssetPath);
+        // CRITICAL: Check if we have appropriate bundled assets for this tier
+        final tier = caps.tier;
+        final isHighEndTier = tier == DeviceTier.high || tier == DeviceTier.flagship;
+
+        // Try to load from bundled assets if available
+        if (isHighEndTier && _modelAssetPath != null && _textModelAssetPath != null) {
+          _logger.info('Loading ONNX vision model from assets: $_modelAssetPath');
+          visionModelBytes = await _loadModelFromAssets(_modelAssetPath!);
+        } else if (!isHighEndTier) {
+          // For low/medium tiers: check if we have a tier-appropriate bundled model
+          // For now, we return a clear error to show the "model not ready" UI
+          // instead of crashing. The UI will guide user to download models.
+          _logger.warning(
+            'Required model "$_resolvedPreset" not available for ${tier.name} tier device. '
+            'Model download failed. Please download from Settings > AI Models.',
+          );
+          // Mark as unavailable rather than throwing - UI will handle gracefully
+          _initialized = true;
+          _visionSession = null;
+          _textSession = null;
+          return;
+        } else {
+          // High-end but no bundled assets configured
+          throw StateError(
+            'No bundled assets configured for fallback. '
+            'Please ensure siglip_base_patch16_224.onnx and siglip_text_encoder.onnx '
+            'are in assets/models/ and declared in pubspec.yaml.',
+          );
+        }
       }
 
       // Load text encoder model (separate preset: siglip-base-patch16-224-text)
@@ -163,44 +190,63 @@ class LocalEmbeddingProvider implements EmbeddingProvider {
           _logger.info('Loading ONNX text encoder from: $textModelPath');
           textModelBytes = await File(textModelPath).readAsBytes();
         } else {
-          _logger.info('Loading ONNX text encoder from assets: $_textModelAssetPath');
-          textModelBytes = await _loadModelFromAssets(_textModelAssetPath);
+          // Same tier check for text encoder fallback
+          final tier = caps.tier;
+          final isHighEndTier = tier == DeviceTier.high || tier == DeviceTier.flagship;
+
+          if (!isHighEndTier) {
+            _logger.warning(
+              'Text encoder not available for ${tier.name} tier (no download, no appropriate asset). '
+              'Text search will be disabled.'
+            );
+            textModelBytes = null;
+          } else if (_textModelAssetPath != null) {
+            _logger.info('Loading ONNX text encoder from assets: $_textModelAssetPath');
+            textModelBytes = await _loadModelFromAssets(_textModelAssetPath!);
+          }
         }
       } catch (e) {
         _logger.warning('Text encoder not available, text search will use fallback: $e');
         textModelBytes = null;
       }
 
-      // Load tokenizer
-      await _loadTokenizer();
+      // If vision model failed to load (not available for this tier), don't try to initialize ONNX
+      if (visionModelBytes != null) {
+        // Load tokenizer
+        await _loadTokenizer();
 
-      // Configure ONNX session options based on device capabilities
-      final sessionOptions = OrtSessionOptions()
-        ..setIntraOpNumThreads(_getOptimalThreadCount())
-        ..setSessionGraphOptimizationLevel(GraphOptimizationLevel.ortEnableAll);
+        // Configure ONNX session options based on device capabilities
+        final sessionOptions = OrtSessionOptions()
+          ..setIntraOpNumThreads(_getOptimalThreadCount())
+          ..setSessionGraphOptimizationLevel(GraphOptimizationLevel.ortEnableAll);
 
-      // Add CPU provider with appropriate flags
-      if (caps.hasNpu && caps.useGpuDelegate) {
-        // Note: ONNX Runtime Android supports NNAPI via CPU provider flags
-        // For explicit NNAPI delegate, additional setup is needed
-        sessionOptions.appendCPUProvider(CPUFlags.useArena);
+        // Add CPU provider with appropriate flags
+        if (caps.hasNpu && caps.useGpuDelegate) {
+          // Note: ONNX Runtime Android supports NNAPI via CPU provider flags
+          // For explicit NNAPI delegate, additional setup is needed
+          sessionOptions.appendCPUProvider(CPUFlags.useArena);
+        } else {
+          sessionOptions.appendCPUProvider(CPUFlags.useArena);
+        }
+
+        // Create ONNX vision session
+        _visionSession = OrtSession.fromBuffer(visionModelBytes, sessionOptions);
+
+        // Create ONNX text session if model is available
+        if (textModelBytes != null) {
+          _textSession = OrtSession.fromBuffer(textModelBytes, sessionOptions);
+          _logger.info('Text encoder ONNX session created successfully');
+        } else {
+          _logger.warning('Text encoder not loaded - text search will use fallback');
+        }
+
+        _initialized = true;
+        _logger.info('LocalEmbeddingProvider initialized with model: $_resolvedPreset');
       } else {
-        sessionOptions.appendCPUProvider(CPUFlags.useArena);
+        // Model not available for this tier - mark as initialized but unavailable
+        _initialized = true;
+        _logger.info('LocalEmbeddingProvider: model not available for ${caps.tier.name} tier');
       }
-
-      // Create ONNX vision session
-      _visionSession = OrtSession.fromBuffer(visionModelBytes, sessionOptions);
-
-      // Create ONNX text session if model is available
-      if (textModelBytes != null) {
-        _textSession = OrtSession.fromBuffer(textModelBytes, sessionOptions);
-        _logger.info('Text encoder ONNX session created successfully');
-      } else {
-        _logger.warning('Text encoder not loaded - text search will use fallback');
-      }
-
-      _initialized = true;
-      _logger.info('LocalEmbeddingProvider initialized with model: $_resolvedPreset');
     } catch (e, st) {
       _logger.error(
         'Failed to initialize LocalEmbeddingProvider',
@@ -263,9 +309,17 @@ class LocalEmbeddingProvider implements EmbeddingProvider {
 
   /// Load tokenizer from SentencePiece model file.
   Future<void> _loadTokenizer() async {
+    // Tokenizer is needed for text search
+    if (_tokenizerAssetPath == null) {
+      _logger.warning('Tokenizer asset path not configured. Text search will be disabled.');
+      _tokenizer = null;
+      _vocabSize = 0;
+      return;
+    }
+
     try {
       // Load tokenizer model from assets
-      final modelBytes = await rootBundle.load(_tokenizerAssetPath);
+      final modelBytes = await rootBundle.load(_tokenizerAssetPath!);
       _tokenizer = SentencePieceTokenizer.fromBytes(
         modelBytes.buffer.asUint8List(),
         config: SentencePieceConfig(
@@ -276,10 +330,9 @@ class LocalEmbeddingProvider implements EmbeddingProvider {
       _vocabSize = _tokenizer!.vocabSize;
       _logger.info('SentencePiece tokenizer loaded (vocab size: $_vocabSize)');
     } catch (e, st) {
-      _logger.error('Failed to load SentencePiece tokenizer', error: e, stackTrace: st);
+      _logger.warning('Failed to load SentencePiece tokenizer, text search disabled: $e');
       _tokenizer = null;
       _vocabSize = 0;
-      rethrow;
     }
   }
 
@@ -359,11 +412,11 @@ class LocalEmbeddingProvider implements EmbeddingProvider {
   Future<Float32List> generateTextEmbedding(String text) async {
     await _ensureInitialized();
 
-    if (_textSession == null) {
+    if (_textSession == null || _tokenizer == null) {
       throw StateError(
-        'Text encoder model not available. '
-        'Please download the text encoder model (siglip-base-patch16-224-text) '
-        'from Settings > AI Models, or ensure the bundled text encoder asset is available. '
+        'Text encoder model or tokenizer not available. '
+        'Please download the text encoder model from Settings > AI Models, '
+        'or ensure the bundled text encoder asset and tokenizer are available. '
         'Without the text encoder, semantic search cannot generate query embeddings.',
       );
     }
