@@ -16,6 +16,9 @@ class LocalModelsScreen extends ConsumerStatefulWidget {
 
 class _LocalModelsScreenState extends ConsumerState<LocalModelsScreen> {
   late Stream<List<DownloadedModel>> _downloadedModelsStream;
+  ModelDownloadResult? _currentDownloadResult;
+  ModelState? _currentDownloadState;
+  String? _currentDownloadingModel;
 
   @override
   void initState() {
@@ -29,6 +32,19 @@ class _LocalModelsScreenState extends ConsumerState<LocalModelsScreen> {
       yield await modelManager.getDownloadedModels();
       await Future.delayed(const Duration(seconds: 2));
     }
+  }
+
+  /// Get current download state for a model.
+  ModelState _getModelDownloadState(String modelName) {
+    if (_currentDownloadingModel != modelName) return ModelState.notInstalled;
+    return _currentDownloadState ?? ModelState.downloading;
+  }
+
+  /// Get progress for a model being downloaded.
+  double _getModelDownloadProgress(String modelName) {
+    if (_currentDownloadingModel != modelName) return 0.0;
+    // We'll track progress in the download dialog
+    return _currentDownloadResult != null && _currentDownloadResult!.isSuccess ? 1.0 : 0.0;
   }
 
   @override
@@ -369,6 +385,9 @@ class _LocalModelsScreenState extends ConsumerState<LocalModelsScreen> {
         .map((e) => e.value)
         .firstOrNull;
 
+    // Get state icon and color
+    final (stateIcon, stateColor, stateText) = _getStateDisplay(model.state, model.errorMessage);
+
     return Card(
       margin: const EdgeInsets.only(bottom: 12),
       child: Padding(
@@ -379,8 +398,8 @@ class _LocalModelsScreenState extends ConsumerState<LocalModelsScreen> {
             Row(
               children: [
                 Icon(
-                  Icons.check_circle,
-                  color: Colors.green,
+                  stateIcon,
+                  color: stateColor,
                   size: 28,
                 ),
                 const SizedBox(width: 12),
@@ -398,9 +417,27 @@ class _LocalModelsScreenState extends ConsumerState<LocalModelsScreen> {
                           color: theme.colorScheme.onSurfaceVariant,
                         ),
                       ),
+                      if (model.state != ModelState.installed && model.state != ModelState.ready)
+                        Text(
+                          stateText,
+                          style: theme.textTheme.bodySmall?.copyWith(
+                            color: stateColor,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
                     ],
                   ),
                 ),
+                if (model.state == ModelState.failed)
+                  OutlinedButton.icon(
+                    onPressed: () => _deleteModel(model, modelManager, logger),
+                    icon: const Icon(Icons.delete_outline, size: 18),
+                    label: const Text('Remove'),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: theme.colorScheme.error,
+                      side: BorderSide(color: theme.colorScheme.error),
+                    ),
+                  ),
               ],
             ),
             const SizedBox(height: 12),
@@ -424,25 +461,63 @@ class _LocalModelsScreenState extends ConsumerState<LocalModelsScreen> {
                   ),
                 ),
                 const Spacer(),
-                OutlinedButton.icon(
-                  onPressed: () => _deleteModel(model, modelManager, logger),
-                  icon: const Icon(Icons.delete_outline, size: 18),
-                  label: const Text('Delete'),
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: theme.colorScheme.error,
-                    side: BorderSide(color: theme.colorScheme.error),
+                if (model.state == ModelState.installed || model.state == ModelState.ready)
+                  OutlinedButton.icon(
+                    onPressed: () => _deleteModel(model, modelManager, logger),
+                    icon: const Icon(Icons.delete_outline, size: 18),
+                    label: const Text('Delete'),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: theme.colorScheme.error,
+                      side: BorderSide(color: theme.colorScheme.error),
+                    ),
                   ),
-                ),
               ],
             ),
             if (preset != null) ...[
               const SizedBox(height: 8),
               _buildModelDetails(theme, preset),
             ],
+            if (model.errorMessage != null) ...[
+              const SizedBox(height: 8),
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: theme.colorScheme.errorContainer,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Row(
+                  children: [
+                    Icon(Icons.error_outline, size: 16, color: theme.colorScheme.onErrorContainer),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        model.errorMessage!,
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: theme.colorScheme.onErrorContainer,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
           ],
         ),
       ),
     );
+  }
+
+  /// Get display info for a model state.
+  (IconData, Color, String) _getStateDisplay(ModelState state, String? errorMessage) {
+    return switch (state) {
+      ModelState.installed => (Icons.check_circle, Colors.green, 'Installed'),
+      ModelState.ready => (Icons.check_circle, Colors.green, 'Ready'),
+      ModelState.loading => (Icons.hourglass_top, Colors.orange, 'Loading...'),
+      ModelState.downloading => (Icons.cloud_download, Colors.blue, 'Downloading...'),
+      ModelState.verifying => (Icons.verified, Colors.blue, 'Verifying...'),
+      ModelState.failed => (Icons.error, Colors.red, 'Failed: ${errorMessage ?? "Unknown error"}'),
+      ModelState.notInstalled => (Icons.cloud_off, Colors.grey, 'Not installed'),
+    };
   }
 
   Widget _buildAvailableModelTile(
@@ -453,7 +528,22 @@ class _LocalModelsScreenState extends ConsumerState<LocalModelsScreen> {
     AppLogger logger,
   ) {
     final isInstalled = downloadedModels.any((m) => m.name == preset.resolvedLocalName);
-    final isDownloading = modelManager.selectedModel == preset.resolvedLocalName;
+    final existingModel = downloadedModels.where((m) => m.name == preset.resolvedLocalName).firstOrNull;
+
+    // Check if this model is currently being downloaded
+    final isDownloading = modelManager.selectedModel == preset.resolvedLocalName &&
+        (modelManager.getDownloadState() == ModelState.downloading ||
+         modelManager.getDownloadState() == ModelState.verifying);
+
+    // Get state for display
+    ModelState displayState = ModelState.notInstalled;
+    if (isInstalled) {
+      displayState = existingModel?.state ?? ModelState.installed;
+    } else if (isDownloading) {
+      displayState = modelManager.getDownloadState();
+    }
+
+    final (stateIcon, stateColor, stateText) = _getStateDisplay(displayState, existingModel?.errorMessage);
 
     return Card(
       margin: const EdgeInsets.only(bottom: 12),
@@ -465,8 +555,8 @@ class _LocalModelsScreenState extends ConsumerState<LocalModelsScreen> {
             Row(
               children: [
                 Icon(
-                  isInstalled ? Icons.check_circle : Icons.cloud_download,
-                  color: isInstalled ? Colors.green : theme.colorScheme.primary,
+                  stateIcon,
+                  color: stateColor,
                   size: 28,
                 ),
                 const SizedBox(width: 12),
@@ -484,26 +574,37 @@ class _LocalModelsScreenState extends ConsumerState<LocalModelsScreen> {
                           color: theme.colorScheme.onSurfaceVariant,
                         ),
                       ),
+                      if (isDownloading || (displayState != ModelState.installed && displayState != ModelState.ready && displayState != ModelState.notInstalled))
+                        Padding(
+                          padding: const EdgeInsets.only(top: 4),
+                          child: Text(
+                            stateText,
+                            style: theme.textTheme.bodySmall?.copyWith(
+                              color: stateColor,
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                        ),
                     ],
                   ),
                 ),
-                if (!isInstalled)
-                  isDownloading
-                      ? const SizedBox(
-                          width: 24,
-                          height: 24,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : FilledButton.icon(
-                          onPressed: () => _downloadModel(preset, modelManager, logger),
-                          icon: const Icon(Icons.download, size: 18),
-                          label: const Text('Download'),
-                          style: FilledButton.styleFrom(
-                            minimumSize: const Size(0, 36),
-                            padding: const EdgeInsets.symmetric(horizontal: 12),
-                          ),
-                        )
-                else
+                if (!isInstalled && !isDownloading)
+                  FilledButton.icon(
+                    onPressed: () => _downloadModel(preset, modelManager, logger),
+                    icon: const Icon(Icons.download, size: 18),
+                    label: const Text('Download'),
+                    style: FilledButton.styleFrom(
+                      minimumSize: const Size(0, 36),
+                      padding: const EdgeInsets.symmetric(horizontal: 12),
+                    ),
+                  )
+                else if (isDownloading)
+                  const SizedBox(
+                    width: 24,
+                    height: 24,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                else if (isInstalled)
                   OutlinedButton.icon(
                     onPressed: null,
                     icon: const Icon(Icons.check, size: 18),
@@ -628,7 +729,11 @@ class _LocalModelsScreenState extends ConsumerState<LocalModelsScreen> {
         modelManager: modelManager,
         preset: preset,
       ),
-    );
+    ).then((_) {
+      // Refresh the stream after dialog closes
+      _downloadedModelsStream = _watchDownloadedModels();
+      if (mounted) setState(() {});
+    });
   }
 
   Future<void> _deleteModel(DownloadedModel model, ModelManager modelManager, AppLogger logger) async {
@@ -681,6 +786,7 @@ class _DownloadProgressDialogState extends ConsumerState<_DownloadProgressDialog
   double _progress = 0.0;
   String _status = 'Preparing...';
   String? _error;
+  ModelState? _currentState;
 
   @override
   void initState() {
@@ -695,9 +801,10 @@ class _DownloadProgressDialogState extends ConsumerState<_DownloadProgressDialog
       setState(() {
         _status = 'Downloading...';
         _progress = 0.0;
+        _currentState = ModelState.downloading;
       });
 
-      final path = await widget.modelManager.getSelectedModelPath(
+      final result = await widget.modelManager.getSelectedModelPath(
         progressCallback: (p) {
           if (mounted) {
             setState(() {
@@ -706,20 +813,46 @@ class _DownloadProgressDialogState extends ConsumerState<_DownloadProgressDialog
             });
           }
         },
+        stateCallback: (state) {
+          if (mounted) {
+            setState(() {
+              _currentState = state;
+              switch (state) {
+                case ModelState.downloading:
+                  _status = 'Downloading... ${(_progress * 100).toInt()}%';
+                  break;
+                case ModelState.verifying:
+                  _status = 'Verifying model...';
+                  break;
+                case ModelState.installed:
+                  _status = 'Download complete!';
+                  _progress = 1.0;
+                  break;
+                case ModelState.failed:
+                  _status = 'Failed';
+                  break;
+                default:
+                  break;
+              }
+            });
+          }
+        },
       );
 
       if (mounted) {
-        if (path != null) {
+        if (result.isSuccess) {
           setState(() {
             _progress = 1.0;
             _status = 'Download complete!';
+            _currentState = ModelState.installed;
           });
           await Future.delayed(const Duration(milliseconds: 500));
           if (mounted) Navigator.pop(context);
         } else {
           setState(() {
-            _error = 'Download failed: Unknown error';
+            _error = 'Download failed: ${result.errorMessage ?? 'Unknown error'}';
             _status = 'Failed';
+            _currentState = ModelState.failed;
           });
         }
       }
@@ -729,6 +862,7 @@ class _DownloadProgressDialogState extends ConsumerState<_DownloadProgressDialog
         setState(() {
           _error = 'Download failed: $e';
           _status = 'Failed';
+          _currentState = ModelState.failed;
         });
       }
     }

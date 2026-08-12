@@ -128,20 +128,20 @@ class LocalEmbeddingProvider implements EmbeddingProvider {
       // Select model in ModelManager (triggers download if needed)
       _modelManager.selectModel(_resolvedPreset!);
 
-      // Try to get model path from ModelManager (downloads if needed)
-      String? modelPath;
+      // Try to get model path from ModelManager (downloads if needed with validation)
+      ModelDownloadResult? result;
       try {
-        modelPath = await _modelManager.getSelectedModelPath();
+        result = await _modelManager.getSelectedModelPath();
       } catch (e) {
         _logger.warning('ModelManager not initialized: $e');
       }
 
       Uint8List visionModelBytes;
 
-      if (modelPath != null) {
+      if (result != null && result.isSuccess && result.localPath.isNotEmpty) {
         // Load from downloaded model file
-        _logger.info('Loading ONNX vision model from: $modelPath');
-        final file = File(modelPath);
+        _logger.info('Loading ONNX vision model from: ${result.localPath}');
+        final file = File(result.localPath);
         visionModelBytes = await file.readAsBytes();
       } else {
         // CRITICAL: Check if we have appropriate bundled assets for this tier
@@ -181,14 +181,14 @@ class LocalEmbeddingProvider implements EmbeddingProvider {
         // Select text encoder model in ModelManager
         final textEncoderPreset = '${_resolvedPreset}-text';
         _modelManager.selectModel(textEncoderPreset);
-        String? textModelPath;
+        ModelDownloadResult? textResult;
         try {
-          textModelPath = await _modelManager.getSelectedModelPath();
+          textResult = await _modelManager.getSelectedModelPath();
         } catch (_) {}
 
-        if (textModelPath != null && await File(textModelPath).exists()) {
-          _logger.info('Loading ONNX text encoder from: $textModelPath');
-          textModelBytes = await File(textModelPath).readAsBytes();
+        if (textResult != null && textResult.isSuccess && textResult.localPath.isNotEmpty) {
+          _logger.info('Loading ONNX text encoder from: ${textResult.localPath}');
+          textModelBytes = await File(textResult.localPath).readAsBytes();
         } else {
           // Same tier check for text encoder fallback
           final tier = caps.tier;

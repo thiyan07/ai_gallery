@@ -1,4 +1,4 @@
-import '../services/model_downloader.dart';
+import '../services/model_downloader.dart' show ModelDownloader, ModelDownloadResult, ModelState, DownloadedModel;
 import '../logging/app_logger.dart';
 
 /// Manages ONNX models: downloading, selection, and provider integration.
@@ -12,37 +12,61 @@ class ModelManager {
   final AppLogger logger;
 
   String? _selectedModel;
+  ModelConfig? _selectedConfig;
 
   /// Currently selected model name.
   String? get selectedModel => _selectedModel;
 
+  /// Currently selected model config.
+  ModelConfig? get selectedConfig => _selectedConfig;
+
   /// Set the active model.
   void selectModel(String modelName) {
     _selectedModel = modelName;
+    _selectedConfig = ModelPresets.presets[modelName];
     logger.info('Selected model: $modelName');
   }
 
   /// Get path to selected model, downloading if needed.
-  Future<String?> getSelectedModelPath({
+  ///
+  /// Returns a [ModelDownloadResult] with state, path, and any error.
+  Future<ModelDownloadResult> getSelectedModelPath({
     void Function(double)? progressCallback,
+    void Function(ModelState)? stateCallback,
   }) async {
-    if (_selectedModel == null) return null;
-
-    final config = ModelPresets.presets[_selectedModel!];
-    if (config == null) return null;
-
-    if (await downloader.isModelDownloaded(config.resolvedLocalName)) {
-      return await downloader.getModelPath(config.resolvedLocalName);
+    if (_selectedConfig == null) {
+      return ModelDownloadResult(
+        localPath: '',
+        state: ModelState.failed,
+        errorMessage: 'No model selected',
+      );
     }
 
-    // Download the model
+    final config = _selectedConfig!;
+
+    // Check if already installed and valid
+    if (await downloader.isModelDownloaded(config.resolvedLocalName)) {
+      logger.info('Model already installed: ${config.resolvedLocalName}');
+      return ModelDownloadResult(
+        localPath: await downloader.getModelPath(config.resolvedLocalName),
+        state: ModelState.installed,
+      );
+    }
+
+    // Download the model with full validation
     logger.info('Downloading model: ${config.modelId}');
-    return downloader.downloadModel(
-      modelId: config.modelId,
-      filename: config.filename,
-      localName: config.resolvedLocalName,
+    stateCallback?.call(ModelState.downloading);
+    return downloader.downloadModelConfig(
+      config,
       progressCallback: progressCallback,
+      stateCallback: stateCallback,
     );
+  }
+
+  /// Get current download state for the selected model.
+  ModelState getDownloadState() {
+    if (_selectedConfig == null) return ModelState.notInstalled;
+    return downloader.getModelState(_selectedConfig!.resolvedLocalName);
   }
 
   /// Get available preset models.
@@ -58,5 +82,10 @@ class ModelManager {
   /// Delete a model.
   Future<void> deleteModel(String modelName) {
     return downloader.deleteModel(modelName);
+  }
+
+  /// Clean up partial downloads.
+  Future<void> cleanupPartialDownloads() {
+    return downloader.cleanupPartialDownloads();
   }
 }

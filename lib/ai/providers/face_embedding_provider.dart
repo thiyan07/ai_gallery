@@ -90,20 +90,20 @@ class FaceEmbeddingProvider implements EmbeddingProvider {
       // Select model in ModelManager (triggers download if needed)
       _modelManager.selectModel(_modelVariant);
 
-      // Try to get model path from ModelManager (downloads if needed)
-      String? modelPath;
+      // Try to get model path from ModelManager (downloads if needed with validation)
+      ModelDownloadResult? result;
       try {
-        modelPath = await _modelManager.getSelectedModelPath();
+        result = await _modelManager.getSelectedModelPath();
       } catch (e) {
         _logger.warning('ModelManager not ready, falling back to assets: $e');
       }
 
       Uint8List modelBytes;
 
-      if (modelPath != null) {
+      if (result != null && result.isSuccess && result.localPath.isNotEmpty) {
         // Load from downloaded model file
-        _logger.info('Loading face embedding model from: $modelPath');
-        final file = File(modelPath);
+        _logger.info('Loading face embedding model from: ${result.localPath}');
+        final file = File(result.localPath);
         modelBytes = await file.readAsBytes();
       } else {
         // Fallback to bundled asset

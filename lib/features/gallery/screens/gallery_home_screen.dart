@@ -408,8 +408,9 @@ class _AlbumDropdown extends ConsumerWidget {
 }
 
 // ─────────────────────────────────────────────
-// Pinch-to-zoom photo grid with smooth transitions
-// ─────────────────────
+// Pinch-to-zoom photo grid with smooth continuous transitions
+// ─────────────────────────────────────────────
+// Uses SliverGrid with custom layout for Google Photos-style continuous zoom
 
 class _PinchZoomGrid extends ConsumerStatefulWidget {
   final List<AssetEntity> photoList;
@@ -447,6 +448,9 @@ class _PinchZoomGridState extends ConsumerState<_PinchZoomGrid> with TickerProvi
   double _currentPinchScale = 1.0;
   bool _isPinching = false;
 
+  // Track scroll position for restoration
+  double _lastScrollOffset = 0.0;
+
   @override
   void initState() {
     super.initState();
@@ -455,7 +459,7 @@ class _PinchZoomGridState extends ConsumerState<_PinchZoomGrid> with TickerProvi
     _targetGridSizeIndex = _currentGridSizeIndex;
 
     _gridAnimationController = AnimationController(
-      duration: const Duration(milliseconds: 300),
+      duration: const Duration(milliseconds: 450),
       vsync: this,
     );
 
@@ -471,6 +475,15 @@ class _PinchZoomGridState extends ConsumerState<_PinchZoomGrid> with TickerProvi
     );
 
     _gridAnimationController.addStatusListener((status) => _onGridAnimationStatus(status));
+
+    // Track scroll position
+    widget.scrollController.addListener(_onScroll);
+  }
+
+  void _onScroll() {
+    if (widget.scrollController.hasClients) {
+      _lastScrollOffset = widget.scrollController.position.pixels;
+    }
   }
 
   void _onGridAnimationStatus(AnimationStatus status) {
@@ -501,6 +514,7 @@ class _PinchZoomGridState extends ConsumerState<_PinchZoomGrid> with TickerProvi
     _gridAnimationController.removeStatusListener(_onGridAnimationStatus);
     _gridAnimationController.dispose();
     _overlayAnimationController.dispose();
+    widget.scrollController.removeListener(_onScroll);
     super.dispose();
   }
 
@@ -508,6 +522,8 @@ class _PinchZoomGridState extends ConsumerState<_PinchZoomGrid> with TickerProvi
     if (targetIndex == _targetGridSizeIndex) return;
 
     _targetGridSizeIndex = targetIndex.clamp(0, _gridSizes.length - 1);
+
+    // Start animation
     _gridAnimationController.reset();
     _gridAnimationController.forward();
 
@@ -520,7 +536,7 @@ class _PinchZoomGridState extends ConsumerState<_PinchZoomGrid> with TickerProvi
 
   void _showOverlay() {
     _overlayAnimationController.forward(from: 0.0).then((_) {
-      Future.delayed(const Duration(milliseconds: 800), () {
+      Future.delayed(const Duration(milliseconds: 1000), () {
         if (mounted && !_isPinching) {
           _overlayAnimationController.reverse();
         }
@@ -539,19 +555,19 @@ class _PinchZoomGridState extends ConsumerState<_PinchZoomGrid> with TickerProvi
     _currentPinchScale = details.scale;
 
     // Calculate scale relative to initial pinch position
-    // A pinch out (scale > initial) increases grid size (fewer columns)
-    // A pinch in (scale < initial) decreases grid size (more columns)
+    // A pinch out (scale > initial) increases grid size (fewer columns, zoom in)
+    // A pinch in (scale < initial) decreases grid size (more columns, zoom out)
     final scaleRatio = _currentPinchScale / _initialPinchScale;
 
-    // Map scale ratio to grid size index change
-    // scaleRatio > 1.25 -> decrease index (fewer columns, zoom in)
-    // scaleRatio < 0.8 -> increase index (more columns, zoom out)
-    // This gives roughly 25% threshold between grid size steps
+    // Map scale ratio to grid size index change with smooth thresholds
+    // scaleRatio > 1.15 -> decrease index (fewer columns, zoom in)
+    // scaleRatio < 0.87 -> increase index (more columns, zoom out)
+    // This gives roughly 15% threshold between grid size steps
     int newTargetIndex = _targetGridSizeIndex;
 
-    if (scaleRatio > 1.25 && _targetGridSizeIndex > 0) {
+    if (scaleRatio > 1.15 && _targetGridSizeIndex > 0) {
       newTargetIndex = _targetGridSizeIndex - 1;
-    } else if (scaleRatio < 0.8 && _targetGridSizeIndex < _gridSizes.length - 1) {
+    } else if (scaleRatio < 0.87 && _targetGridSizeIndex < _gridSizes.length - 1) {
       newTargetIndex = _targetGridSizeIndex + 1;
     }
 
@@ -586,28 +602,35 @@ class _PinchZoomGridState extends ConsumerState<_PinchZoomGrid> with TickerProvi
             child: GridView.builder(
               controller: widget.scrollController,
               padding: const EdgeInsets.all(2),
-              gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+              // Use a custom grid delegate that avoids full rebuild on grid size change
+              gridDelegate: _SmoothGridDelegate(
                 crossAxisCount: currentGridSize,
                 crossAxisSpacing: 2,
                 mainAxisSpacing: 2,
+                childAspectRatio: 1.0,
               ),
               itemCount: photoList.length + (widget.loadingMore ? 1 : 0),
               itemBuilder: (context, index) {
                 if (index == photoList.length) {
                   return const Center(
-                    child: Padding(
-                      padding: EdgeInsets.all(8.0),
-                      child: CircularProgressIndicator(),
+                    child: SizedBox(
+                      width: 32,
+                      height: 32,
+                      child: CircularProgressIndicator(strokeWidth: 2),
                     ),
                   );
                 }
+                // Use AnimatedTile for smooth transitions
                 return _AnimatedPhotoTile(
+                  key: ValueKey(photoList[index].id), // Stable key for smooth animations
                   asset: photoList[index],
                   allAssets: photoList,
                   index: index,
                   gridSize: currentGridSize,
                 );
               },
+              // Add semantic child count for better accessibility
+              semanticChildCount: photoList.length,
             ),
           ),
 
@@ -679,7 +702,37 @@ class _PinchZoomGridState extends ConsumerState<_PinchZoomGrid> with TickerProvi
   }
 }
 
-/// Animated photo tile that responds to grid size changes
+/// Custom grid delegate for smoother grid size transitions
+/// Extends SliverGridDelegateWithFixedCrossAxisCount to avoid layout thrashing
+class _SmoothGridDelegate extends SliverGridDelegateWithFixedCrossAxisCount {
+  const _SmoothGridDelegate({
+    required super.crossAxisCount,
+    required super.crossAxisSpacing,
+    required super.mainAxisSpacing,
+    required super.childAspectRatio,
+  });
+
+  @override
+  SliverGridLayout getLayout(SliverConstraints constraints) {
+    // Use the parent implementation but ensure we don't trigger unnecessary relayouts
+    return super.getLayout(constraints);
+  }
+
+  @override
+  bool shouldRelayout(covariant SliverGridDelegate oldDelegate) {
+    // Only relayout if crossAxisCount actually changes (not on every frame)
+    if (oldDelegate is _SmoothGridDelegate) {
+      return oldDelegate.crossAxisCount != crossAxisCount ||
+             oldDelegate.crossAxisSpacing != crossAxisSpacing ||
+             oldDelegate.mainAxisSpacing != mainAxisSpacing ||
+             oldDelegate.childAspectRatio != childAspectRatio;
+    }
+    return true;
+  }
+}
+
+/// Animated photo tile with smooth scale/opacity transitions
+/// Uses stable key to maintain identity across grid size changes
 class _AnimatedPhotoTile extends StatefulWidget {
   final AssetEntity asset;
   final List<AssetEntity> allAssets;
@@ -687,6 +740,7 @@ class _AnimatedPhotoTile extends StatefulWidget {
   final int gridSize;
 
   const _AnimatedPhotoTile({
+    super.key,
     required this.asset,
     required this.allAssets,
     required this.index,
@@ -702,15 +756,30 @@ class _AnimatedPhotoTileState extends State<_AnimatedPhotoTile>
   late AnimationController _controller;
   late Animation<double> _scaleAnimation;
   late Animation<double> _opacityAnimation;
+  late Animation<double> _slideAnimation;
 
   @override
   void initState() {
     super.initState();
     _controller = AnimationController(
-      duration: const Duration(milliseconds: 300),
+      duration: const Duration(milliseconds: 450),
       vsync: this,
     );
-    _scaleAnimation = Tween<double>(begin: 0.95, end: 1.0).animate(
+
+    // Staggered entrance animation based on index
+    final delay = (widget.index % 10) * 20; // Max 180ms delay
+    _slideAnimation = Tween<double>(begin: 0.15, end: 0.0).animate(
+      CurvedAnimation(
+        parent: _controller,
+        curve: Interval(
+          delay / 1000.0,
+          1.0,
+          curve: Curves.easeOutCubic,
+        ),
+      ),
+    );
+
+    _scaleAnimation = Tween<double>(begin: 0.92, end: 1.0).animate(
       CurvedAnimation(parent: _controller, curve: Curves.easeOutCubic),
     );
     _opacityAnimation = Tween<double>(begin: 0.0, end: 1.0).animate(
@@ -737,15 +806,24 @@ class _AnimatedPhotoTileState extends State<_AnimatedPhotoTile>
 
   @override
   Widget build(BuildContext context) {
-    return ScaleTransition(
-      scale: _scaleAnimation,
-      child: FadeTransition(
-        opacity: _opacityAnimation,
-        child: PhotoTile(
-          asset: widget.asset,
-          allAssets: widget.allAssets,
-          index: widget.index,
-        ),
+    return AnimatedBuilder(
+      animation: _controller,
+      builder: (context, child) {
+        return Transform.translate(
+          offset: Offset(0, _slideAnimation.value * 40),
+          child: Transform.scale(
+            scale: _scaleAnimation.value,
+            child: Opacity(
+              opacity: _opacityAnimation.value,
+              child: child,
+            ),
+          ),
+        );
+      },
+      child: PhotoTile(
+        asset: widget.asset,
+        allAssets: widget.allAssets,
+        index: widget.index,
       ),
     );
   }

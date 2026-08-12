@@ -96,18 +96,18 @@ class BlazeFaceProvider implements FaceDetectionProvider {
       final modelPreset = _modelVariant == 'full_range' ? 'blaze_face_full_range' : 'blaze_face_short_range';
       _modelManager.selectModel(modelPreset);
 
-      // Try to get model path from ModelManager (downloads if needed)
-      String? modelPath;
+      // Try to get model path from ModelManager (downloads if needed with validation)
+      ModelDownloadResult? result;
       try {
-        modelPath = await _modelManager.getSelectedModelPath();
+        result = await _modelManager.getSelectedModelPath();
       } catch (e) {
         _logger.warning('ModelManager not ready, falling back to assets: $e');
       }
 
       Uint8List modelBytes;
-      if (modelPath != null) {
-        _logger.info('Loading BlazeFace model from: $modelPath');
-        final file = File(modelPath);
+      if (result != null && result.isSuccess && result.localPath.isNotEmpty) {
+        _logger.info('Loading BlazeFace model from: ${result.localPath}');
+        final file = File(result.localPath);
         modelBytes = await file.readAsBytes();
       } else {
         _logger.info('Loading BlazeFace model from assets: $_modelAssetPath');
