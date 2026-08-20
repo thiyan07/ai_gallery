@@ -45,6 +45,9 @@ class OpenAIEmbeddingProvider implements EmbeddingProvider {
   String get name => 'OpenAI $model';
 
   @override
+  String get modelId => model;
+
+  @override
   Future<bool> get isAvailable async {
     try {
       final key = await _getApiKey();

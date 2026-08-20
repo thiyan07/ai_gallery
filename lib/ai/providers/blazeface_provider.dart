@@ -8,6 +8,7 @@ import 'package:image/image.dart' as img;
 import 'package:onnxruntime/onnxruntime.dart';
 
 import '../../core/logging/app_logger.dart';
+import '../../core/services/model_downloader.dart';
 import '../../core/services/model_manager.dart';
 import '../../core/utils/device_capabilities.dart';
 import '../../domain/models/face_detection.dart';
@@ -238,33 +239,38 @@ class BlazeFaceProvider implements FaceDetectionProvider {
       final inputTensor = _preprocessImage(imageBytes);
 
       // Run inference
-      final outputs = _session!.run(
-        OrtRunOptions(),
-        {_session!.inputNames.first: inputTensor},
-      );
+      final runOptions = OrtRunOptions();
+      try {
+        final outputs = _session!.run(
+          runOptions,
+          {_session!.inputNames.first: inputTensor},
+        );
 
-      stopwatch.stop();
+        stopwatch.stop();
 
-      // Parse BlazeFace output format: [1, 896, 16] - 896 anchors, 16 values each
-      // 16 = 4 bbox regression + 1 confidence + 10 keypoints (5 points * 2) + 1 (extra?)
-      if (outputs.isEmpty) {
-        throw StateError('No output from model');
+        // Parse BlazeFace output format: [1, 896, 16] - 896 anchors, 16 values each
+        // 16 = 4 bbox regression + 1 confidence + 10 keypoints (5 points * 2) + 1 (extra?)
+        if (outputs.isEmpty) {
+          throw StateError('No output from model');
+        }
+
+        final outputTensor = outputs[0] as OrtValueTensor?;
+        if (outputTensor == null) {
+          throw StateError('No output tensor from model');
+        }
+
+        final detections = _parseBlazeFaceOutput(
+          outputTensor,
+          imageWidth,
+          imageHeight,
+        );
+
+        _logger.debug('BlazeFace detected ${detections.length} faces in ${stopwatch.elapsedMilliseconds}ms');
+
+        return detections;
+      } finally {
+        runOptions.release();
       }
-
-      final outputTensor = outputs[0] as OrtValueTensor?;
-      if (outputTensor == null) {
-        throw StateError('No output tensor from model');
-      }
-
-      final detections = _parseBlazeFaceOutput(
-        outputTensor,
-        imageWidth,
-        imageHeight,
-      );
-
-      _logger.debug('BlazeFace detected ${detections.length} faces in ${stopwatch.elapsedMilliseconds}ms');
-
-      return detections;
     } catch (e, st) {
       _logger.error('Failed to detect faces', error: e, stackTrace: st);
       rethrow;
@@ -496,11 +502,16 @@ class BlazeFaceProvider implements FaceDetectionProvider {
       // Run dummy inference to warm up
       final dummyInput = Float32List(1 * 3 * _inputSize * _inputSize);
       final tensor = OrtValueTensor.createTensorWithDataList(dummyInput, [1, 3, _inputSize, _inputSize]);
-      _session!.run(
-        OrtRunOptions(),
-        {_session!.inputNames.first: tensor},
-      );
-      _logger.info('BlazeFace model warmed up');
+      final runOptions = OrtRunOptions();
+      try {
+        _session!.run(
+          runOptions,
+          {_session!.inputNames.first: tensor},
+        );
+        _logger.info('BlazeFace model warmed up');
+      } finally {
+        runOptions.release();
+      }
     } catch (e) {
       _logger.warning('BlazeFace warm-up failed: $e');
     }
@@ -508,6 +519,7 @@ class BlazeFaceProvider implements FaceDetectionProvider {
 
   @override
   Future<void> dispose() async {
+    _session?.release();
     _session = null;
     _initialized = false;
   }

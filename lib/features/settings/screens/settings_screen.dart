@@ -2,11 +2,13 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:ai_gallery/core/theme/app_theme.dart';
 import 'package:ai_gallery/core/theme/theme_providers.dart';
+import 'package:ai_gallery/features/people/services/people_service.dart';
 import '../../onboarding/providers/onboarding_provider.dart';
 import '../../indexing/screens/indexing_screen.dart';
 import '../screens/api_keys_screen.dart';
 import '../screens/local_models_screen.dart';
 import '../providers/settings_providers.dart';
+import '../../../core/di/providers.dart';
 
 class SettingsScreen extends ConsumerWidget {
   const SettingsScreen({super.key});
@@ -408,6 +410,19 @@ class SettingsScreen extends ConsumerWidget {
               );
             },
           ),
+          const SizedBox(height: 8),
+          // Reset Face Data
+          ListTile(
+            title: const Text('Reset Face Data'),
+            subtitle: const Text(
+              'Remove all face groupings and person labels. Photos are not deleted.',
+            ),
+            leading: Icon(
+              Icons.face_retouching_off,
+              color: Theme.of(context).colorScheme.error,
+            ),
+            onTap: () => _showFaceDataResetDialog(context),
+          ),
           const Divider(height: 32),
 
           // SECURITY & TELEMETRY SECTION
@@ -493,6 +508,60 @@ class SettingsScreen extends ConsumerWidget {
         ),
       ),
     );
+  }
+
+  Future<void> _showFaceDataResetDialog(BuildContext context) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        icon: Icon(
+          Icons.warning_amber_rounded,
+          color: Theme.of(context).colorScheme.error,
+          size: 48,
+        ),
+        title: const Text('Reset Face Data?'),
+        content: const Text(
+          'This will remove all face groupings, person labels, and '
+          'clustering data. Your original photos, metadata, OCR data, '
+          'and semantic embeddings will NOT be affected.\n\n'
+          'This action cannot be undone.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: FilledButton.styleFrom(
+              backgroundColor: Theme.of(context).colorScheme.error,
+            ),
+            child: const Text('Reset'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed == true && context.mounted) {
+      try {
+        final container = ProviderScope.containerOf(context);
+        final database = await container.read(appDatabaseProvider.future);
+        final logger = container.read(appLoggerProvider);
+        final service = PeopleService(logger: logger, database: database);
+        await service.resetAllFaceData();
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Face data has been reset')),
+          );
+        }
+      } catch (e) {
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Failed to reset face data: $e')),
+          );
+        }
+      }
+    }
   }
 
   String _getThemeModeName(ThemeMode mode) {

@@ -47,6 +47,9 @@ class AnthropicEmbeddingProvider implements EmbeddingProvider {
   String get name => 'Anthropic (Claude)';
 
   @override
+  String get modelId => 'anthropic-$model';
+
+  @override
   Future<bool> get isAvailable async {
     try {
       final key = await _getApiKey();

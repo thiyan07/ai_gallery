@@ -8,6 +8,7 @@ import 'package:image/image.dart' as img;
 import 'package:onnxruntime/onnxruntime.dart';
 
 import '../../core/logging/app_logger.dart';
+import '../../core/services/model_downloader.dart';
 import '../../core/services/model_manager.dart';
 import '../../core/utils/device_capabilities.dart';
 import '../../domain/models/ocr.dart';
@@ -15,6 +16,14 @@ import '../../domain/models/object_detection_model.dart';
 import 'object_detection_provider.dart';
 
 /// PaddleOCR text detector + recognizer using ONNX Runtime.
+
+/// Simple tuple class to hold two values.
+class _Tuple {
+  final String item1;
+  final double item2;
+
+  _Tuple(this.item1, this.item2);
+}
 ///
 /// PaddleOCR is a state-of-the-art OCR system with:
 /// - Text detection (DB/DBNet): finds text regions in images (640x640 input)
@@ -114,13 +123,16 @@ class PaddleOcrProvider implements ObjectDetectionProvider {
 
     String? modelPath;
     try {
-      modelPath = await _modelManager.getSelectedModelPath();
+      final result = await _modelManager.getSelectedModelPath();
+      if (result.isSuccess && result.localPath.isNotEmpty) {
+        modelPath = result.localPath;
+      }
     } catch (e) {
       _logger.warning('ModelManager not ready for detector, falling back to assets: $e');
     }
 
     Uint8List modelBytes;
-    if (modelPath != null) {
+    if (modelPath != null && modelPath.isNotEmpty) {
       _logger.info('Loading PaddleOCR detector from: $modelPath');
       final file = File(modelPath);
       modelBytes = await file.readAsBytes();
@@ -144,7 +156,10 @@ class PaddleOcrProvider implements ObjectDetectionProvider {
 
     String? modelPath;
     try {
-      modelPath = await _modelManager.getSelectedModelPath();
+      final result = await _modelManager.getSelectedModelPath();
+      if (result.isSuccess && result.localPath.isNotEmpty) {
+        modelPath = result.localPath;
+      }
     } catch (e) {
       _logger.warning('ModelManager not ready for recognizer, falling back to assets: $e');
     }
@@ -245,12 +260,14 @@ class PaddleOcrProvider implements ObjectDetectionProvider {
         final cropped = _cropTextRegion(imageBytes, region, imageWidth, imageHeight);
 
         // Recognize text
-        final text = await _recognizeText(cropped);
+        final result = await _recognizeText(cropped);
+        final text = result.item1;
+        final confidence = result.item2;
 
         if (text.isNotEmpty) {
           detections.add(DetectedObject(
             label: text,
-            confidence: 0.85, // Placeholder - DBNet doesn't output per-region confidence easily
+            confidence: confidence,
             boundingBox: region, // [x1, y1, x2, y2] normalized
             classIndex: 0,
           ));
@@ -286,13 +303,18 @@ class PaddleOcrProvider implements ObjectDetectionProvider {
       final inputTensor = _preprocessDetector(imageBytes);
 
       // Run inference
-      final outputs = _detectorSession!.run(
-        OrtRunOptions(),
-        {_detectorSession!.inputNames.first: inputTensor},
-      );
+      final runOptions = OrtRunOptions();
+      try {
+        final outputs = _detectorSession!.run(
+          runOptions,
+          {_detectorSession!.inputNames.first: inputTensor},
+        );
 
-      // Parse outputs: DBNet outputs [1, 1, H, W] probability map
-      return _parseDetectorOutput(outputs);
+        // Parse outputs: DBNet outputs [1, 1, H, W] probability map
+        return _parseDetectorOutput(outputs);
+      } finally {
+        runOptions.release();
+      }
     } catch (e, st) {
       _logger.error('PaddleOCR text detection failed', error: e, stackTrace: st);
       rethrow;
@@ -478,21 +500,26 @@ class PaddleOcrProvider implements ObjectDetectionProvider {
   }
 
   /// Recognize text in a cropped region using SVTR/CRNN recognizer.
-  Future<String> _recognizeText(Uint8List croppedBytes) async {
-    if (_recognizerSession == null) return '';
+  Future<_Tuple> _recognizeText(Uint8List croppedBytes) async {
+    if (_recognizerSession == null) return _Tuple('', 0.0);
 
     try {
       final inputTensor = _preprocessRecognizer(croppedBytes);
 
-      final outputs = _recognizerSession!.run(
-        OrtRunOptions(),
-        {_recognizerSession!.inputNames.first: inputTensor},
-      );
+      final runOptions = OrtRunOptions();
+      try {
+        final outputs = _recognizerSession!.run(
+          runOptions,
+          {_recognizerSession!.inputNames.first: inputTensor},
+        );
 
-      return _parseRecognizerOutput(outputs);
+        return _parseRecognizerOutput(outputs);
+      } finally {
+        runOptions.release();
+      }
     } catch (e, st) {
       _logger.error('PaddleOCR text recognition failed', error: e, stackTrace: st);
-      return '';
+      return _Tuple('', 0.0);
     }
   }
 
@@ -582,7 +609,8 @@ class PaddleOcrProvider implements ObjectDetectionProvider {
   }
 
   /// Parse recognizer output using CTC greedy decoding.
-  String _parseRecognizerOutput(List<OrtValue?> outputs) {
+  /// Returns a tuple of [recognized text, average confidence]
+  _Tuple _parseRecognizerOutput(List<OrtValue?> outputs) {
     try {
       final outputTensor = outputs.first as OrtValueTensor?;
       if (outputTensor == null) {
@@ -607,7 +635,9 @@ class PaddleOcrProvider implements ObjectDetectionProvider {
       final seqLen = values.length ~/ vocabSize;
 
       final result = <String>[];
-      String? prevChar;
+      int? prevChar;
+      double totalConfidence = 0;
+      int validChars = 0;
 
       for (int t = 0; t < seqLen; t++) {
         // Find max probability token
@@ -624,18 +654,22 @@ class PaddleOcrProvider implements ObjectDetectionProvider {
         }
 
         // CTC decoding: skip blank (0) and repeated chars
-        if (maxIdx != 0 && maxIdx < _charset.length && maxIdx.toString() != prevChar) {
+        if (maxIdx != 0 && maxIdx < _charset.length && maxIdx != prevChar) {
           result.add(_charset[maxIdx]);
-          prevChar = maxIdx.toString();
+          prevChar = maxIdx;
+          totalConfidence += maxProb;
+          validChars++;
         } else if (maxIdx == 0) {
           prevChar = null; // Reset on blank
         }
       }
 
-      return result.join('');
+      final recognizedText = result.join('');
+      final averageConfidence = validChars > 0 ? totalConfidence / validChars : 0.0;
+      return _Tuple(recognizedText, averageConfidence);
     } catch (e) {
       _logger.warning('Failed to parse PaddleOCR recognizer outputs: $e');
-      return '';
+      return _Tuple('', 0.0);
     }
   }
 
@@ -653,20 +687,30 @@ class PaddleOcrProvider implements ObjectDetectionProvider {
       // Warm up detector
       final dummyDetInput = Float32List(1 * 3 * _detectorInputSize * _detectorInputSize);
       final detTensor = OrtValueTensor.createTensorWithDataList(dummyDetInput, [1, 3, _detectorInputSize, _detectorInputSize]);
-      _detectorSession!.run(
-        OrtRunOptions(),
-        {_detectorSession!.inputNames.first: detTensor},
-      );
+      final detRunOptions = OrtRunOptions();
+      try {
+        _detectorSession!.run(
+          detRunOptions,
+          {_detectorSession!.inputNames.first: detTensor},
+        );
+      } finally {
+        detRunOptions.release();
+      }
 
       // Warm up recognizer
       const recH = 32;
       const recW = 320;
       final dummyRecInput = Float32List(1 * 3 * recH * recW);
       final recTensor = OrtValueTensor.createTensorWithDataList(dummyRecInput, [1, 3, recH, recW]);
-      _recognizerSession!.run(
-        OrtRunOptions(),
-        {_recognizerSession!.inputNames.first: recTensor},
-      );
+      final recRunOptions = OrtRunOptions();
+      try {
+        _recognizerSession!.run(
+          recRunOptions,
+          {_recognizerSession!.inputNames.first: recTensor},
+        );
+      } finally {
+        recRunOptions.release();
+      }
 
       _logger.info('PaddleOCR models warmed up');
     } catch (e) {
@@ -676,7 +720,9 @@ class PaddleOcrProvider implements ObjectDetectionProvider {
 
   @override
   Future<void> dispose() async {
+    _detectorSession?.release();
     _detectorSession = null;
+    _recognizerSession?.release();
     _recognizerSession = null;
     _initialized = false;
   }

@@ -8,6 +8,7 @@ import 'package:image/image.dart' as img;
 import 'package:onnxruntime/onnxruntime.dart';
 
 import '../../core/logging/app_logger.dart';
+import '../../core/services/model_downloader.dart';
 import '../../core/services/model_manager.dart';
 import '../../core/utils/device_capabilities.dart';
 import '../../domain/models/embedding.dart';
@@ -59,6 +60,9 @@ class FaceEmbeddingProvider implements EmbeddingProvider {
 
   @override
   String get name => 'Face Embedding (ONNX): $_modelVariant';
+
+  @override
+  String get modelId => 'face-$_modelVariant';
 
   @override
   Future<bool> get isAvailable async {
@@ -183,33 +187,38 @@ class FaceEmbeddingProvider implements EmbeddingProvider {
       final inputTensor = _preprocessImage(imageBytes);
 
       // Run inference
-      final outputs = _session!.run(
-        OrtRunOptions(),
-        {_session!.inputNames.first: inputTensor},
-      );
+      final runOptions = OrtRunOptions();
+      try {
+        final outputs = _session!.run(
+          runOptions,
+          {_session!.inputNames.first: inputTensor},
+        );
 
-      stopwatch.stop();
+        stopwatch.stop();
 
-      // Parse output: [1, embedding_dim]
-      final outputTensor = outputs[0] as OrtValueTensor?;
+        // Parse output: [1, embedding_dim]
+        final outputTensor = outputs[0] as OrtValueTensor?;
 
-      if (outputTensor == null) {
-        throw StateError('No output tensor from model');
+        if (outputTensor == null) {
+          throw StateError('No output tensor from model');
+        }
+
+        final outputValue = outputTensor.value;
+        if (outputValue is! Float32List) {
+          throw StateError('Unexpected output tensor type: ${outputValue.runtimeType}');
+        }
+
+        final embedding = Float32List.fromList(outputValue);
+
+        // L2 normalize the embedding
+        final normalized = _l2Normalize(embedding);
+
+        _logger.debug('Face embedding generated (${normalized.length}D) in ${stopwatch.elapsedMilliseconds}ms');
+
+        return normalized;
+      } finally {
+        runOptions.release();
       }
-
-      final outputValue = outputTensor.value;
-      if (outputValue is! Float32List) {
-        throw StateError('Unexpected output tensor type: ${outputValue.runtimeType}');
-      }
-
-      final embedding = Float32List.fromList(outputValue);
-
-      // L2 normalize the embedding
-      final normalized = _l2Normalize(embedding);
-
-      _logger.debug('Face embedding generated (${normalized.length}D) in ${stopwatch.elapsedMilliseconds}ms');
-
-      return normalized;
     } catch (e, st) {
       _logger.error('Failed to generate face embedding', error: e, stackTrace: st);
       rethrow;
@@ -478,32 +487,37 @@ class FaceEmbeddingProvider implements EmbeddingProvider {
       final inputTensor = _preprocessAlignedFace(alignedFaceBytes);
 
       // Run inference
-      final outputs = _session!.run(
-        OrtRunOptions(),
-        {_session!.inputNames.first: inputTensor},
-      );
+      final runOptions = OrtRunOptions();
+      try {
+        final outputs = _session!.run(
+          runOptions,
+          {_session!.inputNames.first: inputTensor},
+        );
 
-      stopwatch.stop();
+        stopwatch.stop();
 
-      // Parse output
-      final outputTensor = outputs[0] as OrtValueTensor?;
-      if (outputTensor == null) {
-        throw StateError('No output tensor from model');
+        // Parse output
+        final outputTensor = outputs[0] as OrtValueTensor?;
+        if (outputTensor == null) {
+          throw StateError('No output tensor from model');
+        }
+
+        final outputValue = outputTensor.value;
+        if (outputValue is! Float32List) {
+          throw StateError('Unexpected output tensor type: ${outputValue.runtimeType}');
+        }
+
+        final embedding = Float32List.fromList(outputValue);
+
+        // L2 normalize the embedding
+        final normalized = _l2Normalize(embedding);
+
+        _logger.debug('Face embedding generated (${normalized.length}D) in ${stopwatch.elapsedMilliseconds}ms (with alignment)');
+
+        return normalized;
+      } finally {
+        runOptions.release();
       }
-
-      final outputValue = outputTensor.value;
-      if (outputValue is! Float32List) {
-        throw StateError('Unexpected output tensor type: ${outputValue.runtimeType}');
-      }
-
-      final embedding = Float32List.fromList(outputValue);
-
-      // L2 normalize the embedding
-      final normalized = _l2Normalize(embedding);
-
-      _logger.debug('Face embedding generated (${normalized.length}D) in ${stopwatch.elapsedMilliseconds}ms (with alignment)');
-
-      return normalized;
     } catch (e, st) {
       _logger.error('Failed to generate face embedding with alignment', error: e, stackTrace: st);
       rethrow;
@@ -559,11 +573,16 @@ class FaceEmbeddingProvider implements EmbeddingProvider {
       // Run dummy inference to warm up
       final dummyInput = Float32List(1 * 3 * _inputSize * _inputSize);
       final tensor = OrtValueTensor.createTensorWithDataList(dummyInput, [1, 3, _inputSize, _inputSize]);
-      _session!.run(
-        OrtRunOptions(),
-        {_session!.inputNames.first: tensor},
-      );
-      _logger.info('Face embedding model warmed up');
+      final runOptions = OrtRunOptions();
+      try {
+        _session!.run(
+          runOptions,
+          {_session!.inputNames.first: tensor},
+        );
+        _logger.info('Face embedding model warmed up');
+      } finally {
+        runOptions.release();
+      }
     } catch (e) {
       _logger.warning('Face embedding warm-up failed: $e');
     }
@@ -571,6 +590,7 @@ class FaceEmbeddingProvider implements EmbeddingProvider {
 
   @override
   Future<void> dispose() async {
+    _session?.release();
     _session = null;
     _initialized = false;
   }

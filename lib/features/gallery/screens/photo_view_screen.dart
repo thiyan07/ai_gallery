@@ -114,15 +114,18 @@ class _PhotoViewScreenState extends ConsumerState<PhotoViewScreen> {
                       child: CircularProgressIndicator(
                         value: progress.expectedTotalBytes != null
                             ? progress.cumulativeBytesLoaded /
-                                progress.expectedTotalBytes!
+                                  progress.expectedTotalBytes!
                             : null,
                         color: Colors.white,
                       ),
                     );
                   },
                   errorBuilder: (_, __, ___) => const Center(
-                    child:
-                        Icon(Icons.broken_image, color: Colors.white, size: 64),
+                    child: Icon(
+                      Icons.broken_image,
+                      color: Colors.white,
+                      size: 64,
+                    ),
                   ),
                 ),
               ),
@@ -190,10 +193,12 @@ class _PhotoViewScreenState extends ConsumerState<PhotoViewScreen> {
                   ),
                 ),
               ),
-              Text('Photo Details',
-                  style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                        fontWeight: FontWeight.bold,
-                      )),
+              Text(
+                'Photo Details',
+                style: Theme.of(
+                  context,
+                ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold),
+              ),
               const SizedBox(height: 16),
               _DetailRow(label: 'Filename', value: asset.title ?? '—'),
               _DetailRow(
@@ -214,7 +219,7 @@ class _PhotoViewScreenState extends ConsumerState<PhotoViewScreen> {
                   value:
                       '${asset.duration ~/ 60}:${(asset.duration % 60).toString().padLeft(2, '0')}',
                 ),
-              if (asset.latitude != null)
+              if (asset.latitude != null && asset.longitude != null)
                 _DetailRow(
                   label: 'Location',
                   value:
@@ -274,43 +279,62 @@ class _SimilarPhotosScreen extends ConsumerStatefulWidget {
   });
 
   @override
-  ConsumerState<_SimilarPhotosScreen> createState() => _SimilarPhotosScreenState();
+  ConsumerState<_SimilarPhotosScreen> createState() =>
+      _SimilarPhotosScreenState();
 }
 
 class _SimilarPhotosScreenState extends ConsumerState<_SimilarPhotosScreen> {
   late List<AssetEntity> _similarAssets;
+  late List<RankedSearchResult> _currentResults;
   bool _loading = true;
 
   @override
   void initState() {
     super.initState();
+    _currentResults = List.from(widget.searchResults);
     _loadSimilarAssets();
   }
 
   Future<void> _loadSimilarAssets() async {
-    // Fetch AssetEntity objects for the photo IDs
-    final photoIds = widget.searchResults.map((r) => r.photoId).toSet();
-    final allAssets = await PhotoManager.getAssetPathList(type: RequestType.image);
-    final matchingAssets = <AssetEntity>[];
+    try {
+      // Fetch AssetEntity objects for the photo IDs
+      final photoIds = _currentResults.map((r) => r.photoId).toSet();
+      final allAssets = await PhotoManager.getAssetPathList(
+        type: RequestType.image,
+      );
+      final matchingAssets = <AssetEntity>[];
 
-    for (final assetPath in allAssets) {
-      final assets = await assetPath.getAssetListPaged(page: 0, size: 10000);
-      for (final asset in assets) {
-        if (photoIds.contains(asset.id)) {
-          matchingAssets.add(asset);
+      for (final assetPath in allAssets) {
+        final assets = await assetPath.getAssetListPaged(page: 0, size: 10000);
+        for (final asset in assets) {
+          if (photoIds.contains(asset.id)) {
+            matchingAssets.add(asset);
+          }
         }
       }
-    }
 
-    // Sort to match the search results order
-    final idToIndex = {for (var i = 0; i < widget.searchResults.length; i++) widget.searchResults[i].photoId: i};
-    matchingAssets.sort((a, b) => (idToIndex[a.id] ?? 999).compareTo(idToIndex[b.id] ?? 999));
+      // Sort to match the search results order
+      final idToIndex = {
+        for (var i = 0; i < _currentResults.length; i++)
+          _currentResults[i].photoId: i,
+      };
+      matchingAssets.sort(
+        (a, b) => (idToIndex[a.id] ?? 999).compareTo(idToIndex[b.id] ?? 999),
+      );
 
-    if (mounted) {
-      setState(() {
-        _similarAssets = matchingAssets;
-        _loading = false;
-      });
+      if (mounted) {
+        setState(() {
+          _similarAssets = matchingAssets;
+          _loading = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _similarAssets = [];
+          _loading = false;
+        });
+      }
     }
   }
 
@@ -339,85 +363,85 @@ class _SimilarPhotosScreenState extends ConsumerState<_SimilarPhotosScreen> {
       body: _loading
           ? const Center(child: CircularProgressIndicator(color: Colors.white))
           : _similarAssets.isEmpty
-              ? Center(
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
+          ? Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const Icon(Icons.search_off, color: Colors.white54, size: 64),
+                  const SizedBox(height: 16),
+                  Text(
+                    'No similar photos found',
+                    style: Theme.of(
+                      context,
+                    ).textTheme.titleLarge?.copyWith(color: Colors.white70),
+                  ),
+                ],
+              ),
+            )
+          : GridView.builder(
+              padding: const EdgeInsets.all(2),
+              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                crossAxisCount: 3,
+                crossAxisSpacing: 2,
+                mainAxisSpacing: 2,
+              ),
+              itemCount: _similarAssets.length,
+              itemBuilder: (context, index) {
+                final asset = _similarAssets[index];
+                final result = _currentResults.firstWhere(
+                  (r) => r.photoId == asset.id,
+                  orElse: () => _currentResults[index],
+                );
+                return GestureDetector(
+                  onTap: () => _openPhotoView(index),
+                  child: Stack(
+                    fit: StackFit.expand,
                     children: [
-                      const Icon(Icons.search_off, color: Colors.white54, size: 64),
-                      const SizedBox(height: 16),
-                      Text(
-                        'No similar photos found',
-                        style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                              color: Colors.white70,
+                      AssetEntityImage(
+                        asset,
+                        isOriginal: false,
+                        thumbnailSize: const ThumbnailSize.square(300),
+                        fit: BoxFit.cover,
+                        errorBuilder: (_, __, ___) => Container(
+                          color: Colors.grey[800],
+                          child: const Icon(
+                            Icons.broken_image_outlined,
+                            color: Colors.grey,
+                          ),
+                        ),
+                      ),
+                      Positioned(
+                        bottom: 0,
+                        left: 0,
+                        right: 0,
+                        child: Container(
+                          padding: const EdgeInsets.all(4),
+                          decoration: BoxDecoration(
+                            gradient: LinearGradient(
+                              begin: Alignment.bottomCenter,
+                              end: Alignment.topCenter,
+                              colors: [
+                                Colors.black.withValues(alpha: 0.8),
+                                Colors.transparent,
+                              ],
                             ),
+                          ),
+                          child: Text(
+                            '${(result.score * 100).toInt()}%',
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 10,
+                              fontWeight: FontWeight.bold,
+                            ),
+                            textAlign: TextAlign.right,
+                          ),
+                        ),
                       ),
                     ],
                   ),
-                )
-              : GridView.builder(
-                  padding: const EdgeInsets.all(2),
-                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                    crossAxisCount: 3,
-                    crossAxisSpacing: 2,
-                    mainAxisSpacing: 2,
-                  ),
-                  itemCount: _similarAssets.length,
-                  itemBuilder: (context, index) {
-                    final asset = _similarAssets[index];
-                    final result = widget.searchResults.firstWhere(
-                      (r) => r.photoId == asset.id,
-                      orElse: () => widget.searchResults[index],
-                    );
-                    return GestureDetector(
-                      onTap: () => _openPhotoView(index),
-                      child: Stack(
-                        fit: StackFit.expand,
-                        children: [
-                          AssetEntityImage(
-                            asset,
-                            isOriginal: false,
-                            thumbnailSize: const ThumbnailSize.square(300),
-                            fit: BoxFit.cover,
-                            errorBuilder: (_, __, ___) => Container(
-                              color: Colors.grey[800],
-                              child: const Icon(
-                                Icons.broken_image_outlined,
-                                color: Colors.grey,
-                              ),
-                            ),
-                          ),
-                          Positioned(
-                            bottom: 0,
-                            left: 0,
-                            right: 0,
-                            child: Container(
-                              padding: const EdgeInsets.all(4),
-                              decoration: BoxDecoration(
-                                gradient: LinearGradient(
-                                  begin: Alignment.bottomCenter,
-                                  end: Alignment.topCenter,
-                                  colors: [
-                                    Colors.black.withValues(alpha: 0.8),
-                                    Colors.transparent,
-                                  ],
-                                ),
-                              ),
-                              child: Text(
-                                '${(result.score * 100).toInt()}%',
-                                style: const TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 10,
-                                  fontWeight: FontWeight.bold,
-                                ),
-                                textAlign: TextAlign.right,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    );
-                  },
-                ),
+                );
+              },
+            ),
     );
   }
 
@@ -425,7 +449,10 @@ class _SimilarPhotosScreenState extends ConsumerState<_SimilarPhotosScreen> {
     // Use the first similar result as the new reference
     if (_similarAssets.isNotEmpty) {
       final searchService = ref.read(searchServiceProvider);
-      final results = await searchService.searchSimilar(_similarAssets[0].id, limit: 20);
+      final results = await searchService.searchSimilar(
+        _similarAssets[0].id,
+        limit: 20,
+      );
 
       if (!mounted) return;
 
@@ -437,7 +464,9 @@ class _SimilarPhotosScreenState extends ConsumerState<_SimilarPhotosScreen> {
       }
 
       final photoIds = results.map((r) => r.photoId).toSet();
-      final allAssets = await PhotoManager.getAssetPathList(type: RequestType.image);
+      final allAssets = await PhotoManager.getAssetPathList(
+        type: RequestType.image,
+      );
       final matchingAssets = <AssetEntity>[];
 
       for (final assetPath in allAssets) {
@@ -449,14 +478,17 @@ class _SimilarPhotosScreenState extends ConsumerState<_SimilarPhotosScreen> {
         }
       }
 
-      final idToIndex = {for (var i = 0; i < results.length; i++) results[i].photoId: i};
-      matchingAssets.sort((a, b) => (idToIndex[a.id] ?? 999).compareTo(idToIndex[b.id] ?? 999));
+      final idToIndex = {
+        for (var i = 0; i < results.length; i++) results[i].photoId: i,
+      };
+      matchingAssets.sort(
+        (a, b) => (idToIndex[a.id] ?? 999).compareTo(idToIndex[b.id] ?? 999),
+      );
 
       if (mounted) {
         setState(() {
           _similarAssets = matchingAssets;
-          widget.searchResults.clear();
-          widget.searchResults.addAll(results);
+          _currentResults = results;
         });
       }
     }
@@ -465,10 +497,8 @@ class _SimilarPhotosScreenState extends ConsumerState<_SimilarPhotosScreen> {
   void _openPhotoView(int index) {
     Navigator.of(context).push(
       MaterialPageRoute(
-        builder: (_) => PhotoViewScreen(
-          assets: _similarAssets,
-          initialIndex: index,
-        ),
+        builder: (_) =>
+            PhotoViewScreen(assets: _similarAssets, initialIndex: index),
       ),
     );
   }

@@ -87,9 +87,9 @@ final deviceMediaDataSourceProvider = Provider<DeviceMediaDataSource>((ref) {
 
 final localFavoritesDataSourceProvider =
     FutureProvider<LocalFavoritesDataSource>((ref) async {
-  final db = await ref.watch(appDatabaseProvider.future);
-  return LocalFavoritesDataSource(db);
-});
+      final db = await ref.watch(appDatabaseProvider.future);
+      return LocalFavoritesDataSource(db);
+    });
 
 // ─────────────────────────────────────────────
 // Repositories
@@ -105,8 +105,9 @@ final photoRepositoryProvider = Provider<PhotoRepository>((ref) {
   );
 });
 
-final favoritesRepositoryProvider =
-    FutureProvider<FavoritesRepository>((ref) async {
+final favoritesRepositoryProvider = FutureProvider<FavoritesRepository>((
+  ref,
+) async {
   final dataSource = await ref.watch(localFavoritesDataSourceProvider.future);
   return FavoritesRepositoryImpl(dataSource);
 });
@@ -130,7 +131,9 @@ final userSettingsJsonProvider = Provider<String>((ref) {
 });
 
 /// Background job queue using isolate worker.
-final backgroundJobQueueProvider = FutureProvider<BackgroundJobQueue>((ref) async {
+final backgroundJobQueueProvider = FutureProvider<BackgroundJobQueue>((
+  ref,
+) async {
   final db = await ref.watch(appDatabaseProvider.future);
   final logger = ref.watch(appLoggerProvider);
   final databasePath = await ref.watch(databasePathProvider.future);
@@ -175,20 +178,24 @@ final userSettingsProvider = Provider((ref) {
 });
 
 /// Embedding provider (local or cloud based on settings).
-final embeddingProviderProvider = FutureProvider<EmbeddingProvider?>((ref) async {
+final embeddingProviderProvider = FutureProvider<EmbeddingProvider?>((
+  ref,
+) async {
   final logger = ref.watch(appLoggerProvider);
   final settings = ref.watch(userSettingsProvider);
 
   switch (settings.aiMode) {
     case AiMode.local:
       final modelManager = ref.watch(modelManagerProvider);
-      return LocalEmbeddingProvider(
+      final provider = LocalEmbeddingProvider(
         logger: logger,
         modelManager: modelManager,
-        modelAssetPath: 'assets/models/siglip_base_patch16_224.onnx',
-        textModelAssetPath: 'assets/models/siglip_text_encoder.onnx',
-        tokenizerAssetPath: 'assets/models/siglip_tokenizer.model',
+        modelAssetPath: null,
+        textModelAssetPath: null,
+        tokenizerAssetPath: null,
       );
+      await provider.initialize();
+      return provider;
 
     case AiMode.byok:
     case AiMode.hybrid:
@@ -224,13 +231,16 @@ final embeddingProviderProvider = FutureProvider<EmbeddingProvider?>((ref) async
       }
 
       // Fall back to local if no cloud keys configured
-      logger.warning('No cloud API keys configured, falling back to local embedding');
+      logger.warning(
+        'No cloud API keys configured, falling back to local embedding',
+      );
       final modelManager = ref.watch(modelManagerProvider);
       return LocalEmbeddingProvider(
         logger: logger,
         modelManager: modelManager,
-        // Don't pass asset paths - let LocalEmbeddingProvider handle tier-appropriate fallbacks
-        // This prevents loading huge SigLIP models on low/mid tier devices
+        modelAssetPath: null,
+        textModelAssetPath: null,
+        tokenizerAssetPath: null,
       );
   }
 });
@@ -244,9 +254,16 @@ final aiManagerProvider = FutureProvider<AIManager>((ref) async {
 
   // Resolve providers from future providers
   final embeddingProvider = await ref.watch(embeddingProviderProvider.future);
-  final objectDetectionProvider = await ref.watch(objectDetectionProviderProvider.future);
-  final faceDetectionProvider = await ref.watch(faceDetectionProviderProvider.future);
-  final faceEmbeddingProvider = await ref.watch(faceEmbeddingProviderProvider.future);
+  final objectDetectionProvider = await ref.watch(
+    objectDetectionProviderProvider.future,
+  );
+  final faceDetectionProvider = await ref.watch(
+    faceDetectionProviderProvider.future,
+  );
+  final faceEmbeddingProvider = await ref.watch(
+    faceEmbeddingProviderProvider.future,
+  );
+  final ocrProvider = await ref.watch(ocrProviderProvider.future);
 
   return AIManagerImpl(
     jobQueue: jobQueue,
@@ -255,6 +272,7 @@ final aiManagerProvider = FutureProvider<AIManager>((ref) async {
     faceEmbeddingProvider: () => faceEmbeddingProvider,
     objectDetectionProvider: () => objectDetectionProvider,
     faceDetectionProvider: () => faceDetectionProvider,
+    ocrProvider: () => ocrProvider,
     photoRepository: photoRepo,
     database: db,
     logger: logger,
@@ -319,45 +337,51 @@ final modelManagerProvider = Provider<ModelManager>((ref) {
 // ─────────────────────────────────────────────
 
 /// Object detection provider (local YOLO via ONNX or cloud via Google Vision).
-final objectDetectionProviderProvider = FutureProvider<ObjectDetectionProvider?>((ref) async {
-  final logger = ref.watch(appLoggerProvider);
-  final settings = ref.watch(userSettingsProvider);
+final objectDetectionProviderProvider =
+    FutureProvider<ObjectDetectionProvider?>((ref) async {
+      final logger = ref.watch(appLoggerProvider);
+      final settings = ref.watch(userSettingsProvider);
 
-  if (settings.aiMode == AiMode.local) {
-    final modelManager = ref.watch(modelManagerProvider);
-    final provider = LocalObjectDetectionProvider(
-      logger: logger,
-      modelManager: modelManager,
-    );
-    await provider.initialize();
-    return provider;
-  }
+      if (settings.aiMode == AiMode.local) {
+        final modelManager = ref.watch(modelManagerProvider);
+        final provider = LocalObjectDetectionProvider(
+          logger: logger,
+          modelManager: modelManager,
+          modelAssetPath: null,
+        );
+        await provider.initialize();
+        return provider;
+      }
 
-  // For BYOK and Hybrid modes, try cloud providers
-  final secureStorage = ref.watch(secureStorageServiceProvider);
+      // For BYOK and Hybrid modes, try cloud providers
+      final secureStorage = ref.watch(secureStorageServiceProvider);
 
-  // Try Google Vision (supports object detection and OCR)
-  final visionKey = await secureStorage.getGoogleVisionKey();
-  if (visionKey != null && visionKey.isNotEmpty) {
-    final provider = GoogleVisionProvider(
-      logger: logger,
-      secureStorage: secureStorage,
-    );
-    await provider.initialize();
-    return provider;
-  }
+      // Try Google Vision (supports object detection and OCR)
+      final visionKey = await secureStorage.getGoogleVisionKey();
+      if (visionKey != null && visionKey.isNotEmpty) {
+        final provider = GoogleVisionProvider(
+          logger: logger,
+          secureStorage: secureStorage,
+        );
+        await provider.initialize();
+        return provider;
+      }
 
-  // Fall back to null provider if no cloud keys configured
-  logger.warning('No cloud API keys configured for object detection, disabling');
-  return NullObjectDetectionProvider();
-});
+      // Fall back to null provider if no cloud keys configured
+      logger.warning(
+        'No cloud API keys configured for object detection, disabling',
+      );
+      return NullObjectDetectionProvider();
+    });
 
 // ─────────────────────────────────────────────
 // AI Face Detection
 // ─────────────────────────────────────────────
 
 /// Face detection provider (local BlazeFace via ONNX).
-final faceDetectionProviderProvider = FutureProvider<FaceDetectionProvider?>((ref) async {
+final faceDetectionProviderProvider = FutureProvider<FaceDetectionProvider?>((
+  ref,
+) async {
   final logger = ref.watch(appLoggerProvider);
   final settings = ref.watch(userSettingsProvider);
 
@@ -366,6 +390,7 @@ final faceDetectionProviderProvider = FutureProvider<FaceDetectionProvider?>((re
     final provider = BlazeFaceProvider(
       logger: logger,
       modelManager: modelManager,
+      modelAssetPath: null,
       modelVariant: 'short_range', // 128x128 for speed
       confidenceThreshold: 0.5,
       iouThreshold: 0.3,
@@ -398,18 +423,22 @@ final faceDetectionProviderProvider = FutureProvider<FaceDetectionProvider?>((re
 // ─────────────────────────────────────────────
 
 /// Face embedding provider (local MobileFaceNet/ArcFace via ONNX).
-final faceEmbeddingProviderProvider = FutureProvider<EmbeddingProvider?>((ref) async {
+final faceEmbeddingProviderProvider = FutureProvider<EmbeddingProvider?>((
+  ref,
+) async {
   final logger = ref.watch(appLoggerProvider);
   final settings = ref.watch(userSettingsProvider);
 
   if (settings.aiMode == AiMode.local) {
     final modelManager = ref.watch(modelManagerProvider);
     // Use MobileFaceNet for speed on mobile, ArcFace for quality
-    final isHighEnd = (await DeviceCapabilities.instance).tier.index >= DeviceTier.high.index;
+    final isHighEnd =
+        (await DeviceCapabilities.instance).tier.index >= DeviceTier.high.index;
 
     final provider = FaceEmbeddingProvider(
       logger: logger,
       modelManager: modelManager,
+      modelAssetPath: null,
       modelVariant: isHighEnd ? 'arcface_r18' : 'mobilefacenet',
     );
     await provider.initialize();
@@ -427,7 +456,9 @@ final faceEmbeddingProviderProvider = FutureProvider<EmbeddingProvider?>((ref) a
 // ─────────────────────────────────────────────
 
 /// OCR provider (local PaddleOCR via ONNX or cloud via Google Vision).
-final ocrProviderProvider = FutureProvider<ObjectDetectionProvider?>((ref) async {
+final ocrProviderProvider = FutureProvider<ObjectDetectionProvider?>((
+  ref,
+) async {
   final logger = ref.watch(appLoggerProvider);
   final settings = ref.watch(userSettingsProvider);
 
@@ -436,8 +467,8 @@ final ocrProviderProvider = FutureProvider<ObjectDetectionProvider?>((ref) async
     final provider = PaddleOcrProvider(
       logger: logger,
       modelManager: modelManager,
-      detectorAssetPath: 'assets/models/ppocr_det.onnx',
-      recognizerAssetPath: 'assets/models/ppocr_rec.onnx',
+      detectorAssetPath: null,
+      recognizerAssetPath: null,
     );
     await provider.initialize();
     return provider;

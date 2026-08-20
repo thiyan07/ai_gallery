@@ -10,6 +10,7 @@ import 'daos/favorites_dao.dart';
 import 'daos/object_tag_dao.dart';
 import 'daos/ocr_dao.dart';
 import 'daos/photo_metadata_dao.dart';
+import 'daos/people_dao.dart';
 
 /// Central SQLite database for AI Gallery metadata.
 class AppDatabase {
@@ -17,7 +18,7 @@ class AppDatabase {
 
   static AppDatabase? _instance;
   static const _dbName = 'ai_gallery.db';
-  static const _dbVersion = 4;
+  static const _dbVersion = 6;
 
   final Database _db;
 
@@ -31,6 +32,7 @@ class AppDatabase {
   late final ObjectTagDao objectTags = ObjectTagDao(_db);
   late final OcrDao ocrResults = OcrDao(_db);
   late final EmbeddingDao embeddings = EmbeddingDao(_db);
+  late final PeopleDao peopleDao = PeopleDao(_db);
 
   /// Opens or returns the singleton database instance.
   static Future<AppDatabase> open({AppLogger? logger}) async {
@@ -103,6 +105,10 @@ class AppDatabase {
     if (version >= 4) {
       await _createPhotoUsageTable(db);
     }
+    if (version >= 6) {
+      await _createPeopleTable(db);
+      await _addPersonIdToFacesTable(db);
+    }
   }
 
   static Future<void> _onUpgrade(
@@ -119,6 +125,16 @@ class AppDatabase {
     }
     if (oldVersion < 4) {
       await _createPhotoUsageTable(db);
+    }
+    if (oldVersion < 5) {
+      await db.execute('ALTER TABLE photo_metadata ADD COLUMN face_status INTEGER NOT NULL DEFAULT 0');
+      await db.execute('ALTER TABLE photo_metadata ADD COLUMN face_model_version TEXT');
+    }
+    if (oldVersion < 6) {
+      await _createPeopleTable(db);
+      await _addPersonIdToFacesTable(db);
+      // Migrate existing labels to persons if needed
+      await _migrateLabelsToPersons(db);
     }
   }
 
@@ -140,6 +156,7 @@ class AppDatabase {
         bounding_box_top REAL NOT NULL,
         bounding_box_width REAL NOT NULL,
         bounding_box_height REAL NOT NULL,
+        confidence REAL NOT NULL,
         label TEXT,
         embedding BLOB
       )
@@ -150,7 +167,11 @@ class AppDatabase {
         id TEXT PRIMARY KEY,
         photo_id TEXT NOT NULL,
         label TEXT NOT NULL,
-        confidence REAL NOT NULL
+        confidence REAL NOT NULL,
+        bounding_box_left REAL,
+        bounding_box_top REAL,
+        bounding_box_width REAL,
+        bounding_box_height REAL
       )
     ''');
 
@@ -163,7 +184,8 @@ class AppDatabase {
         bounding_box_left REAL,
         bounding_box_top REAL,
         bounding_box_width REAL,
-        bounding_box_height REAL
+        bounding_box_height REAL,
+        created_at TEXT NOT NULL
       )
     ''');
 
@@ -173,6 +195,7 @@ class AppDatabase {
         photo_id TEXT NOT NULL,
         model TEXT NOT NULL,
         vector BLOB NOT NULL,
+        dimensions INTEGER NOT NULL,
         created_at TEXT NOT NULL
       )
     ''');
@@ -219,7 +242,11 @@ class AppDatabase {
         indexed_at TEXT NOT NULL,
         album_id TEXT,
         folder_path TEXT,
-        media_type TEXT
+        media_type TEXT,
+        ocr_status INTEGER NOT NULL DEFAULT 0,
+        ocr_model_version TEXT,
+        face_status INTEGER NOT NULL DEFAULT 0,
+        face_model_version TEXT
       )
     ''');
   }
@@ -249,5 +276,67 @@ class AppDatabase {
     await db.insert('index_status', {
       'id': 0,
     }, conflictAlgorithm: ConflictAlgorithm.ignore);
+  }
+
+  static Future<void> _createPeopleTable(Database db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS people (
+        person_id TEXT PRIMARY KEY,
+        display_name TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        cover_photo_id TEXT,
+        status TEXT NOT NULL DEFAULT 'active'
+      )
+    ''');
+  }
+
+  static Future<void> _addPersonIdToFacesTable(Database db) async {
+    await db.execute('ALTER TABLE faces ADD COLUMN person_id TEXT');
+    // Create index for faster lookups
+    await db.execute('CREATE INDEX IF NOT EXISTS idx_faces_person_id ON faces(person_id)');
+  }
+
+  static Future<void> _migrateLabelsToPersons(Database db) async {
+    // Get all distinct non-null, non-empty labels from faces
+    final distinctLabels = await db.rawQuery('''
+      SELECT DISTINCT label
+      FROM faces
+      WHERE label IS NOT NULL AND label != ''
+    ''');
+
+    final batch = db.batch();
+    final now = DateTime.now().toIso8601String();
+
+    for (final row in distinctLabels) {
+      final label = row['label'] as String;
+      if (label == null || label.isEmpty) continue;
+
+      // Generate a person_id based on the label to maintain consistency
+      final personId = 'person_${label.hashCode.abs()}';
+
+      // Insert person if it doesn't exist
+      batch.insert(
+        'people',
+        {
+          'person_id': personId,
+          'display_name': label,
+          'created_at': now,
+          'updated_at': now,
+          'status': 'active',
+        },
+        conflictAlgorithm: ConflictAlgorithm.ignore,
+      );
+
+      // Update faces with this label to reference the person
+      batch.update(
+        'faces',
+        {'person_id': personId},
+        where: 'label = ? AND person_id IS NULL',
+        whereArgs: [label],
+      );
+    }
+
+    await batch.commit();
   }
 }

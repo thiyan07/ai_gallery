@@ -1,4 +1,58 @@
 /// Domain model representing metadata extracted from a photo.
+enum OcrStatus {
+  notProcessed,
+  processing,
+  completed,
+  noText,
+  failed,
+}
+
+extension OcrStatusExtension on int? {
+  OcrStatus toOcrStatus() {
+    switch (this) {
+      case 0:
+        return OcrStatus.notProcessed;
+      case 1:
+        return OcrStatus.processing;
+      case 2:
+        return OcrStatus.completed;
+      case 3:
+        return OcrStatus.noText;
+      case 4:
+        return OcrStatus.failed;
+      default:
+        return OcrStatus.notProcessed;
+    }
+  }
+}
+
+enum FaceStatus {
+  notProcessed,
+  processing,
+  completed,
+  noFaces,
+  failed,
+}
+
+extension FaceStatusExtension on int? {
+  FaceStatus toFaceStatus() {
+    switch (this) {
+      case 0:
+        return FaceStatus.notProcessed;
+      case 1:
+        return FaceStatus.processing;
+      case 2:
+        return FaceStatus.completed;
+      case 3:
+        return FaceStatus.noFaces;
+      case 4:
+        return FaceStatus.failed;
+      default:
+        return FaceStatus.notProcessed;
+    }
+  }
+}
+
 class PhotoMetadata {
   /// Unique photo identifier (matches Photo.id).
   final String photoId;
@@ -75,6 +129,18 @@ class PhotoMetadata {
   /// Media type (e.g., 'image', 'video').
   final String? mediaType;
 
+  /// OCR processing status.
+  final OcrStatus ocrStatus;
+
+  /// Version/hash of the OCR model used for this status (to detect when re-OCR is needed).
+  final String? ocrModelVersion;
+
+  /// Face processing status.
+  final FaceStatus faceStatus;
+
+  /// Version/hash of the face model used for this status (to detect when re-processing is needed).
+  final String? faceModelVersion;
+
   const PhotoMetadata({
     required this.photoId,
     required this.width,
@@ -101,6 +167,10 @@ class PhotoMetadata {
     this.albumId,
     this.folderPath,
     this.mediaType,
+    this.ocrStatus = OcrStatus.notProcessed,
+    this.ocrModelVersion,
+    this.faceStatus = FaceStatus.notProcessed,
+    this.faceModelVersion,
   });
 
   PhotoMetadata copyWith({
@@ -129,6 +199,10 @@ class PhotoMetadata {
     String? albumId,
     String? folderPath,
     String? mediaType,
+    OcrStatus? ocrStatus,
+    String? ocrModelVersion,
+    FaceStatus? faceStatus,
+    String? faceModelVersion,
   }) {
     return PhotoMetadata(
       photoId: photoId ?? this.photoId,
@@ -156,6 +230,10 @@ class PhotoMetadata {
       albumId: albumId ?? this.albumId,
       folderPath: folderPath ?? this.folderPath,
       mediaType: mediaType ?? this.mediaType,
+      ocrStatus: ocrStatus ?? this.ocrStatus,
+      ocrModelVersion: ocrModelVersion ?? this.ocrModelVersion,
+      faceStatus: faceStatus ?? this.faceStatus,
+      faceModelVersion: faceModelVersion ?? this.faceModelVersion,
     );
   }
 
@@ -191,6 +269,10 @@ class PhotoMetadata {
       albumId: row['album_id'] as String?,
       folderPath: row['folder_path'] as String?,
       mediaType: row['media_type'] as String?,
+      ocrStatus: (row['ocr_status'] as int?)?.toOcrStatus() ?? OcrStatus.notProcessed,
+      ocrModelVersion: row['ocr_model_version'] as String?,
+      faceStatus: (row['face_status'] as int?)?.toFaceStatus() ?? FaceStatus.notProcessed,
+      faceModelVersion: row['face_model_version'] as String?,
     );
   }
 }

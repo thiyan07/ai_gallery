@@ -8,6 +8,7 @@ import 'package:onnxruntime/onnxruntime.dart';
 import 'package:dart_sentencepiece_tokenizer/dart_sentencepiece_tokenizer.dart';
 
 import 'package:ai_gallery/core/logging/app_logger.dart';
+import 'package:ai_gallery/core/services/model_downloader.dart';
 import 'package:ai_gallery/core/services/model_manager.dart';
 import 'package:ai_gallery/core/utils/device_capabilities.dart';
 import 'package:ai_gallery/ai/providers/embedding_provider.dart';
@@ -95,6 +96,9 @@ class LocalEmbeddingProvider implements EmbeddingProvider {
 
   @override
   String get name => 'Auto: $modelPreset (ONNX)';
+
+  @override
+  String get modelId => _resolvedPreset ?? _determinePreset();
 
   @override
   Future<bool> get isAvailable async {
@@ -210,43 +214,31 @@ class LocalEmbeddingProvider implements EmbeddingProvider {
         textModelBytes = null;
       }
 
-      // If vision model failed to load (not available for this tier), don't try to initialize ONNX
-      if (visionModelBytes != null) {
-        // Load tokenizer
-        await _loadTokenizer();
+      // visionModelBytes is guaranteed non-null here (early return or thrown above)
+      // Load tokenizer
+      await _loadTokenizer();
 
-        // Configure ONNX session options based on device capabilities
-        final sessionOptions = OrtSessionOptions()
-          ..setIntraOpNumThreads(_getOptimalThreadCount())
-          ..setSessionGraphOptimizationLevel(GraphOptimizationLevel.ortEnableAll);
+      // Configure ONNX session options based on device capabilities
+      final sessionOptions = OrtSessionOptions()
+        ..setIntraOpNumThreads(_getOptimalThreadCount())
+        ..setSessionGraphOptimizationLevel(GraphOptimizationLevel.ortEnableAll);
 
-        // Add CPU provider with appropriate flags
-        if (caps.hasNpu && caps.useGpuDelegate) {
-          // Note: ONNX Runtime Android supports NNAPI via CPU provider flags
-          // For explicit NNAPI delegate, additional setup is needed
-          sessionOptions.appendCPUProvider(CPUFlags.useArena);
-        } else {
-          sessionOptions.appendCPUProvider(CPUFlags.useArena);
-        }
+      // Add CPU provider with appropriate flags
+      sessionOptions.appendCPUProvider(CPUFlags.useArena);
 
-        // Create ONNX vision session
-        _visionSession = OrtSession.fromBuffer(visionModelBytes, sessionOptions);
+      // Create ONNX vision session
+      _visionSession = OrtSession.fromBuffer(visionModelBytes, sessionOptions);
 
-        // Create ONNX text session if model is available
-        if (textModelBytes != null) {
-          _textSession = OrtSession.fromBuffer(textModelBytes, sessionOptions);
-          _logger.info('Text encoder ONNX session created successfully');
-        } else {
-          _logger.warning('Text encoder not loaded - text search will use fallback');
-        }
-
-        _initialized = true;
-        _logger.info('LocalEmbeddingProvider initialized with model: $_resolvedPreset');
+      // Create ONNX text session if model is available
+      if (textModelBytes != null) {
+        _textSession = OrtSession.fromBuffer(textModelBytes, sessionOptions);
+        _logger.info('Text encoder ONNX session created successfully');
       } else {
-        // Model not available for this tier - mark as initialized but unavailable
-        _initialized = true;
-        _logger.info('LocalEmbeddingProvider: model not available for ${caps.tier.name} tier');
+        _logger.warning('Text encoder not loaded - text search will use fallback');
       }
+
+      _initialized = true;
+      _logger.info('LocalEmbeddingProvider initialized with model: $_resolvedPreset');
     } catch (e, st) {
       _logger.error(
         'Failed to initialize LocalEmbeddingProvider',
@@ -374,34 +366,39 @@ class LocalEmbeddingProvider implements EmbeddingProvider {
       final inputTensor = _preprocessImage(imageBytes);
 
       // Run inference
-      final outputs = _visionSession!.run(
-        OrtRunOptions(),
-        {
-          _visionSession!.inputNames.first: inputTensor,
-        },
-      );
+      final runOptions = OrtRunOptions();
+      try {
+        final outputs = _visionSession!.run(
+          runOptions,
+          {
+            _visionSession!.inputNames.first: inputTensor,
+          },
+        );
 
-      // Get first output tensor
-      final outputTensor = outputs.first;
-      if (outputTensor == null) {
-        throw StateError('No output tensor from vision model');
+        // Get first output tensor
+        final outputTensor = outputs.first;
+        if (outputTensor == null) {
+          throw StateError('No output tensor from vision model');
+        }
+
+        // Extract embedding as Float32List
+        final dynamic outputValue = outputTensor.value;
+        Float32List embedding;
+        if (outputValue is List<double>) {
+          embedding = Float32List.fromList(outputValue);
+        } else if (outputValue is Float32List) {
+          embedding = outputValue;
+        } else {
+          throw StateError('Unexpected output tensor type: ${outputValue.runtimeType}');
+        }
+
+        // L2 normalize
+        final normalized = _l2Normalize(embedding);
+
+        return Float32List.fromList(normalized);
+      } finally {
+        runOptions.release();
       }
-
-      // Extract embedding as Float32List
-      final dynamic outputValue = outputTensor.value;
-      Float32List embedding;
-      if (outputValue is List<double>) {
-        embedding = Float32List.fromList(outputValue);
-      } else if (outputValue is Float32List) {
-        embedding = outputValue;
-      } else {
-        throw StateError('Unexpected output tensor type: ${outputValue.runtimeType}');
-      }
-
-      // L2 normalize
-      final normalized = _l2Normalize(embedding);
-
-      return Float32List.fromList(normalized);
     } catch (e, st) {
       _logger.error('Failed to generate image embedding', error: e, stackTrace: st);
       rethrow;
@@ -440,35 +437,40 @@ class LocalEmbeddingProvider implements EmbeddingProvider {
       );
 
       // Run text encoder inference
-      final outputs = _textSession!.run(
-        OrtRunOptions(),
-        {
-          _textSession!.inputNames.first: inputTensor,
-        },
-      );
+      final runOptions = OrtRunOptions();
+      try {
+        final outputs = _textSession!.run(
+          runOptions,
+          {
+            _textSession!.inputNames.first: inputTensor,
+          },
+        );
 
-      // Get output tensor
-      final outputTensor = outputs.first;
-      if (outputTensor == null) {
-        throw StateError('No output tensor from text encoder');
+        // Get output tensor
+        final outputTensor = outputs.first;
+        if (outputTensor == null) {
+          throw StateError('No output tensor from text encoder');
+        }
+
+        // Extract embedding and normalize
+        final dynamic outputValue = outputTensor.value;
+        Float32List embedding;
+        if (outputValue is List<double>) {
+          embedding = Float32List.fromList(outputValue);
+        } else if (outputValue is Float32List) {
+          embedding = outputValue;
+        } else {
+          throw StateError('Unexpected output tensor type: ${outputValue.runtimeType}');
+        }
+
+        // L2 normalize
+        final normalized = _l2Normalize(embedding);
+
+        _logger.info('Generated text embedding for: "$text" (dim: ${normalized.length})');
+        return Float32List.fromList(normalized);
+      } finally {
+        runOptions.release();
       }
-
-      // Extract embedding and normalize
-      final dynamic outputValue = outputTensor.value;
-      Float32List embedding;
-      if (outputValue is List<double>) {
-        embedding = Float32List.fromList(outputValue);
-      } else if (outputValue is Float32List) {
-        embedding = outputValue;
-      } else {
-        throw StateError('Unexpected output tensor type: ${outputValue.runtimeType}');
-      }
-
-      // L2 normalize
-      final normalized = _l2Normalize(embedding);
-
-      _logger.info('Generated text embedding for: "$text" (dim: ${normalized.length})');
-      return Float32List.fromList(normalized);
     } catch (e, st) {
       _logger.error('Failed to generate text embedding', error: e, stackTrace: st);
       rethrow;
@@ -570,11 +572,16 @@ class LocalEmbeddingProvider implements EmbeddingProvider {
     try {
       final dummyData = Float32List(3 * inputSize * inputSize);
       final tensor = OrtValueTensor.createTensorWithDataList(dummyData, [1, 3, inputSize, inputSize]);
-      _visionSession!.run(
-        OrtRunOptions(),
-        {_visionSession!.inputNames.first: tensor},
-      );
-      _logger.info('Local embedding model warmed up');
+      final runOptions = OrtRunOptions();
+      try {
+        _visionSession!.run(
+          runOptions,
+          {_visionSession!.inputNames.first: tensor},
+        );
+        _logger.info('Local embedding model warmed up');
+      } finally {
+        runOptions.release();
+      }
     } catch (e) {
       _logger.warning('Local embedding warm-up failed: $e');
     }

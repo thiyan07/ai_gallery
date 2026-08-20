@@ -50,6 +50,7 @@ class FaceDetectionRecord {
     required this.confidence,
     this.label,
     this.embedding,
+    this.personId,
   });
 
   final String id;
@@ -61,6 +62,7 @@ class FaceDetectionRecord {
   final double confidence;
   final String? label;
   final Float32List? embedding;
+  final String? personId;
 
   Map<String, dynamic> toMap() => {
         'id': id,
@@ -72,6 +74,7 @@ class FaceDetectionRecord {
         'confidence': confidence,
         'label': label,
         'embedding': embedding?.buffer.asUint8List(),
+        'person_id': personId,
       };
 
   factory FaceDetectionRecord.fromMap(Map<String, dynamic> map) {
@@ -88,6 +91,7 @@ class FaceDetectionRecord {
       embedding: embeddingBytes != null
           ? Float32List.fromList(embeddingBytes.buffer.asFloat32List())
           : null,
+      personId: map['person_id'] as String?,
     );
   }
 }

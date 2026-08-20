@@ -8,6 +8,7 @@ import 'package:image/image.dart' as img;
 import 'package:onnxruntime/onnxruntime.dart';
 
 import '../../core/logging/app_logger.dart';
+import '../../core/services/model_downloader.dart';
 import '../../core/services/model_manager.dart';
 import '../../core/utils/device_capabilities.dart';
 import '../../domain/models/object_detection_model.dart';
@@ -229,32 +230,37 @@ class LocalObjectDetectionProvider implements ObjectDetectionProvider {
       final inputTensor = _preprocessImage(imageBytes);
 
       // Run inference
-      final outputs = _session!.run(
-        OrtRunOptions(),
-        {_session!.inputNames.first: inputTensor},
-      );
+      final runOptions = OrtRunOptions();
+      try {
+        final outputs = _session!.run(
+          runOptions,
+          {_session!.inputNames.first: inputTensor},
+        );
 
-      stopwatch.stop();
+        stopwatch.stop();
 
-      // Parse YOLOv8 output format: [1, 84, 8400] - 80 classes + 4 bbox
-      final outputTensor = outputs[0] as OrtValueTensor?;
+        // Parse YOLOv8 output format: [1, 84, 8400] - 80 classes + 4 bbox
+        final outputTensor = outputs[0] as OrtValueTensor?;
 
-      if (outputTensor == null) {
-        throw StateError('No output tensor from model');
+        if (outputTensor == null) {
+          throw StateError('No output tensor from model');
+        }
+
+        final detections = _parseYoloOutput(
+          outputTensor,
+          imageWidth,
+          imageHeight,
+        );
+
+        return ObjectDetectionResult(
+          detections: detections,
+          imageWidth: imageWidth,
+          imageHeight: imageHeight,
+          inferenceTimeMs: stopwatch.elapsedMilliseconds,
+        );
+      } finally {
+        runOptions.release();
       }
-
-      final detections = _parseYoloOutput(
-        outputTensor,
-        imageWidth,
-        imageHeight,
-      );
-
-      return ObjectDetectionResult(
-        detections: detections,
-        imageWidth: imageWidth,
-        imageHeight: imageHeight,
-        inferenceTimeMs: stopwatch.elapsedMilliseconds,
-      );
     } catch (e, st) {
       _logger.error('Failed to detect objects', error: e, stackTrace: st);
       rethrow;
@@ -435,11 +441,16 @@ class LocalObjectDetectionProvider implements ObjectDetectionProvider {
       // Run dummy inference to warm up
       final dummyInput = Float32List(1 * 3 * _resolvedInputSize! * _resolvedInputSize!);
       final tensor = OrtValueTensor.createTensorWithDataList(dummyInput, [1, 3, _resolvedInputSize!, _resolvedInputSize!]);
-      _session!.run(
-        OrtRunOptions(),
-        {_session!.inputNames.first: tensor},
-      );
-      _logger.info('Object detection model warmed up');
+      final runOptions = OrtRunOptions();
+      try {
+        _session!.run(
+          runOptions,
+          {_session!.inputNames.first: tensor},
+        );
+        _logger.info('Object detection model warmed up');
+      } finally {
+        runOptions.release();
+      }
     } catch (e) {
       _logger.warning('Warm-up failed: $e');
     }
@@ -447,6 +458,7 @@ class LocalObjectDetectionProvider implements ObjectDetectionProvider {
 
   @override
   Future<void> dispose() async {
+    _session?.release();
     _session = null;
     _initialized = false;
   }

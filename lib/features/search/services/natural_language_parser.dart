@@ -31,7 +31,8 @@ class ParsedQuery {
       filters.maxBlurScore != null ||
       filters.hasLocation ||
       filters.cameraMake != null ||
-      filters.cameraModel != null;
+      filters.cameraModel != null ||
+      filters.personName != null;
 
   ParsedQuery copyWith({
     String? semanticQuery,
@@ -57,15 +58,18 @@ class ParsedQuery {
 /// - "dog photos at beach" → semanticQuery: "dog beach", objectTag: "dog" (if indexed)
 /// - "not blurry photos from yesterday" → maxBlurScore: 0.3, dateFrom: yesterday
 class NaturalLanguageParser {
-  NaturalLanguageParser({DateTime? referenceTime})
+  NaturalLanguageParser({DateTime? referenceTime, List<String>? personNames})
       : _referenceTime = referenceTime ?? DateTime.now(),
-        _logger = null;
+        _logger = null,
+        _personNames = personNames ?? [];
 
   final DateTime _referenceTime;
   final AppLogger? _logger;
+  final List<String> _personNames;
 
-  NaturalLanguageParser.withLogger(this._logger, {DateTime? referenceTime})
-      : _referenceTime = referenceTime ?? DateTime.now();
+  NaturalLanguageParser.withLogger(this._logger, {DateTime? referenceTime, List<String>? personNames})
+      : _referenceTime = referenceTime ?? DateTime.now(),
+        _personNames = personNames ?? [];
 
   // ─────────────────────────────────────────────
   // Date/time patterns
@@ -306,6 +310,22 @@ class NaturalLanguageParser {
       }
     }
 
+    // 6. Parse person names (match against known people)
+    String? detectedPersonName;
+    for (final name in _personNames) {
+      final namePattern = RegExp(
+        r'\b' + RegExp.escape(name) + r'\b',
+        caseSensitive: false,
+      );
+      final match = namePattern.firstMatch(remainingQuery);
+      if (match != null) {
+        detectedPersonName = name;
+        removedSpans.add(_Span(match.start, match.end));
+        matchedPatterns++;
+        break; // Take the first matching person name
+      }
+    }
+
     // Build SearchFilters
     final searchFilters = SearchFilters(
       dateFrom: filters['dateFrom'] as DateTime?,
@@ -315,6 +335,7 @@ class NaturalLanguageParser {
       hasLocation: filters['hasLocation'] as bool? ?? false,
       cameraMake: filters['cameraMake'] as String?,
       cameraModel: filters['cameraModel'] as String?,
+      personName: detectedPersonName,
     );
 
     // Reconstruct semantic query by removing matched filter terms
@@ -446,10 +467,10 @@ Map<String, dynamic>? _handleLastPeriod(RegExpMatch match, DateTime ref) {
       start = end.subtract(const Duration(days: 7));
       break;
     case 'month':
-      start = DateTime(ref.year, ref.month - 1, ref.day);
+      start = DateTime(ref.year, ref.month - 1, ref.day.clamp(1, _daysInMonth(ref.year, ref.month - 1)));
       break;
     case 'year':
-      start = DateTime(ref.year - 1, ref.month, ref.day);
+      start = DateTime(ref.year - 1, ref.month, ref.day.clamp(1, _daysInMonth(ref.year - 1, ref.month)));
       break;
     default:
       return null;
@@ -510,11 +531,14 @@ Map<String, dynamic>? _handleTimeAgo(RegExpMatch match, DateTime ref) {
       break;
     case 'month':
     case 'months':
-      start = DateTime(ref.year, ref.month - amount, ref.day);
+      final targetMonth = ref.month - amount;
+      final targetYear = ref.year + ((targetMonth - 1) ~/ 12);
+      final normalizedMonth = ((targetMonth - 1) % 12) + 1;
+      start = DateTime(targetYear, normalizedMonth, ref.day.clamp(1, _daysInMonth(targetYear, normalizedMonth)));
       break;
     case 'year':
     case 'years':
-      start = DateTime(ref.year - amount, ref.month, ref.day);
+      start = DateTime(ref.year - amount, ref.month, ref.day.clamp(1, _daysInMonth(ref.year - amount, ref.month)));
       break;
     default:
       return null;
@@ -662,4 +686,10 @@ Map<String, dynamic>? _handleLocation(RegExpMatch match) {
   final location = match.group(1)?.trim();
   if (location == null || location.isEmpty) return null;
   return {'hasLocation': true, '_locationHint': location};
+}
+
+int _daysInMonth(int year, int month) {
+  final m = month <= 0 ? 12 + ((month - 1) % 12) + 1 : month;
+  final adjusted = month <= 0 ? year - 1 : year;
+  return DateTime(adjusted, m + 1, 0).day;
 }

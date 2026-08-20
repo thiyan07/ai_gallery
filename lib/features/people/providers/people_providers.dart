@@ -1,35 +1,36 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:ai_gallery/core/database/app_database.dart';
-import 'package:ai_gallery/core/logging/app_logger.dart';
 import 'package:ai_gallery/core/di/providers.dart';
 import 'package:ai_gallery/features/people/services/face_clustering_service.dart';
+import 'package:ai_gallery/domain/models/person_cluster.dart';
 
 /// Provider for FaceClusteringService.
 final faceClusteringServiceProvider = Provider<FaceClusteringService>((ref) {
-  throw UnimplementedError('Use faceClusteringServiceProviderAsync for async initialization');
+  throw UnimplementedError(
+    'Use faceClusteringServiceProviderAsync for async initialization',
+  );
 });
 
 /// Async provider for FaceClusteringService that initializes with database.
-final faceClusteringServiceProviderAsync = AsyncNotifierProvider<FaceClusteringServiceNotifier, FaceClusteringService>(
-  FaceClusteringServiceNotifier.new,
-);
+final faceClusteringServiceProviderAsync =
+    AsyncNotifierProvider<FaceClusteringServiceNotifier, FaceClusteringService>(
+      FaceClusteringServiceNotifier.new,
+    );
 
-class FaceClusteringServiceNotifier extends AsyncNotifier<FaceClusteringService> {
+class FaceClusteringServiceNotifier
+    extends AsyncNotifier<FaceClusteringService> {
   @override
   Future<FaceClusteringService> build() async {
     final logger = ref.read(appLoggerProvider);
     final database = await ref.read(appDatabaseProvider.future);
-    return FaceClusteringService(
-      logger: logger,
-      database: database,
-    );
+    return FaceClusteringService(logger: logger, database: database);
   }
 }
 
 /// Provider for people clusters stream.
-final peopleClustersProvider = AsyncNotifierProvider<PeopleClustersNotifier, List<PersonCluster>>(
-  PeopleClustersNotifier.new,
-);
+final peopleClustersProvider =
+    AsyncNotifierProvider<PeopleClustersNotifier, List<PersonCluster>>(
+      PeopleClustersNotifier.new,
+    );
 
 class PeopleClustersNotifier extends AsyncNotifier<List<PersonCluster>> {
   @override
@@ -59,7 +60,10 @@ class PeopleClustersNotifier extends AsyncNotifier<List<PersonCluster>> {
 }
 
 /// Provider for a single person cluster by label.
-final personClusterProvider = FutureProvider.family<PersonCluster?, String>((ref, label) async {
+final personClusterProvider = FutureProvider.family<PersonCluster?, String>((
+  ref,
+  label,
+) async {
   final service = await ref.watch(faceClusteringServiceProviderAsync.future);
   final clusters = await service.getPeopleClusters();
   try {

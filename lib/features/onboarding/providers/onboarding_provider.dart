@@ -2,6 +2,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:photo_manager/photo_manager.dart';
 
 import '../../../core/di/providers.dart' as di_providers;
+import '../../../core/services/model_downloader.dart';
 
 class OnboardingState {
   final int currentStep;
@@ -139,18 +140,20 @@ class OnboardingNotifier extends Notifier<OnboardingState> {
   }
 
   void _downloadDefaultModel() {
-    // Fire and forget - download the default model in background
-    ref.read(di_providers.modelDownloaderProvider).downloadModel(
-      modelId: 'google/siglip-base-patch16-224',
-      filename: 'onnx/model.onnx',
-      localName: 'siglip_base_patch16_224',
+    // Fire and forget - download the default model in background using ModelPresets
+    ref.read(di_providers.modelDownloaderProvider).downloadModelConfig(
+      ModelPresets.presets['siglip-base-patch16-224']!,
       progressCallback: (progress) {
         // Could update UI with progress if needed
       },
     ).catchError((e, st) {
       final logger = ref.read(di_providers.appLoggerProvider);
       logger.warning('Failed to download default model', error: e, stackTrace: st);
-      return 'error'; // Return a string to satisfy the FutureOr<String> type
+      return ModelDownloadResult(
+        localPath: '',
+        state: ModelState.failed,
+        errorMessage: e.toString(),
+      );
     });
   }
 

@@ -1,4 +1,4 @@
-import 'dart:io' show File, Directory, Platform, HttpException;
+import 'dart:io' show File, Directory, Platform, HttpException, IOSink;
 import 'package:crypto/crypto.dart';
 import 'package:http/http.dart' as http;
 import 'package:onnxruntime/onnxruntime.dart';
@@ -214,22 +214,26 @@ class ModelDownloader {
       final sessionOptions = OrtSessionOptions()
         ..setSessionGraphOptimizationLevel(GraphOptimizationLevel.ortDisableAll);
 
-      // Try to create a session - this validates the ONNX file
-      final modelBytes = await File(modelPath).readAsBytes();
-      final session = OrtSession.fromBuffer(modelBytes, sessionOptions);
+      try {
+        // Try to create a session - this validates the ONNX file
+        final modelBytes = await File(modelPath).readAsBytes();
+        final session = OrtSession.fromBuffer(modelBytes, sessionOptions);
 
-      // Basic validation - check if we can get input/output info
-      final inputNames = session.inputNames;
-      final outputNames = session.outputNames;
+        // Basic validation - check if we can get input/output info
+        final inputNames = session.inputNames;
+        final outputNames = session.outputNames;
 
-      // Log model info for debugging
-      _logger.info('ONNX model validated - Inputs: $inputNames, Outputs: $outputNames');
+        // Log model info for debugging
+        _logger.info('ONNX model validated - Inputs: $inputNames, Outputs: $outputNames');
 
-      // Clean up
-      session.release();
+        // Clean up
+        session.release();
 
-      _logger.info('ONNX validation successful: $modelPath');
-      return true;
+        _logger.info('ONNX validation successful: $modelPath');
+        return true;
+      } finally {
+        sessionOptions.release();
+      }
     } on Exception catch (e, st) {
       _logger.error('ONNX validation failed: $modelPath', error: e, stackTrace: st);
       return false;
@@ -288,36 +292,37 @@ class ModelDownloader {
 
     try {
       final client = http.Client();
-      final request = http.Request('GET', Uri.parse(url));
-      final response = await client.send(request);
+      IOSink? sink;
+      try {
+        final request = http.Request('GET', Uri.parse(url));
+        final response = await client.send(request);
 
-      if (response.statusCode == 404) {
-        throw HttpException('Model file not found on Hugging Face (${config.modelId}/${config.filename}). '
-            'The model repo might not have this ONNX file, or it may require authentication. '
-            'Status: 404 Not Found');
-      } else if (response.statusCode == 401 || response.statusCode == 403) {
-        throw HttpException('Access denied downloading from Hugging Face (${config.modelId}/${config.filename}). '
-            'This model may require authentication or be gated. '
-            'Status: ${response.statusCode}');
-      } else if (response.statusCode != 200) {
-        throw HttpException('Failed to download model from $url: ${response.statusCode}');
-      }
+        if (response.statusCode == 404) {
+          throw HttpException('Model file not found on Hugging Face (${config.modelId}/${config.filename}). '
+              'The model repo might not have this ONNX file, or it may require authentication. '
+              'Status: 404 Not Found');
+        } else if (response.statusCode == 401 || response.statusCode == 403) {
+          throw HttpException('Access denied downloading from Hugging Face (${config.modelId}/${config.filename}). '
+              'This model may require authentication or be gated. '
+              'Status: ${response.statusCode}');
+        } else if (response.statusCode != 200) {
+          throw HttpException('Failed to download model from $url: ${response.statusCode}');
+        }
 
-      final contentLength = response.contentLength ?? 0;
-      final sink = tempFile.openWrite();
-      int downloaded = 0;
+        final contentLength = response.contentLength ?? 0;
+        sink = tempFile.openWrite();
+        int downloaded = 0;
 
-      await for (final chunk in response.stream) {
-        sink.add(chunk);
-        downloaded += chunk.length;
-        if (contentLength > 0 && progressCallback != null) {
-          progressCallback(downloaded / contentLength);
+        await for (final chunk in response.stream) {
+          sink.add(chunk);
+          downloaded += chunk.length;
+          if (contentLength > 0 && progressCallback != null) {
+            progressCallback(downloaded / contentLength);
         }
       }
 
       await sink.close();
       await sink.flush();
-      client.close();
 
       _logger.info('Model downloaded to temp file: $tempPath (${downloaded} bytes)');
 
@@ -346,6 +351,9 @@ class ModelDownloader {
         fileSize: downloaded,
         sha256: sha256Hash,
       );
+      } finally {
+        client.close();
+      }
     } catch (e, st) {
       _logger.error('Failed to download model', error: e, stackTrace: st);
 
@@ -425,51 +433,55 @@ class ModelDownloader {
 
     try {
       final client = http.Client();
-      final request = http.Request('GET', Uri.parse(url));
-      final response = await client.send(request);
+      IOSink? sink;
+      try {
+        final request = http.Request('GET', Uri.parse(url));
+        final response = await client.send(request);
 
-      if (response.statusCode == 404) {
-        throw HttpException('Model file not found at URL ($url). Status: 404 Not Found');
-      } else if (response.statusCode == 401 || response.statusCode == 403) {
-        throw HttpException('Access denied downloading from $url. Status: ${response.statusCode}');
-      } else if (response.statusCode != 200) {
-        throw HttpException('Failed to download model from $url: ${response.statusCode}');
-      }
-
-      final contentLength = response.contentLength ?? 0;
-      final sink = File(tempPath).openWrite();
-      int downloaded = 0;
-
-      await for (final chunk in response.stream) {
-        sink.add(chunk);
-        downloaded += chunk.length;
-        if (contentLength > 0 && progressCallback != null) {
-          progressCallback(downloaded / contentLength);
+        if (response.statusCode == 404) {
+          throw HttpException('Model file not found at URL ($url). Status: 404 Not Found');
+        } else if (response.statusCode == 401 || response.statusCode == 403) {
+          throw HttpException('Access denied downloading from $url. Status: ${response.statusCode}');
+        } else if (response.statusCode != 200) {
+          throw HttpException('Failed to download model from $url: ${response.statusCode}');
         }
+
+        final contentLength = response.contentLength ?? 0;
+        sink = File(tempPath).openWrite();
+        int downloaded = 0;
+
+        await for (final chunk in response.stream) {
+          sink.add(chunk);
+          downloaded += chunk.length;
+          if (contentLength > 0 && progressCallback != null) {
+            progressCallback(downloaded / contentLength);
+          }
+        }
+
+        await sink.close();
+        await sink.flush();
+
+        _logger.info('Model downloaded to temp file: $tempPath');
+
+        // Verify download (basic checks only for direct URLs)
+        final tempFile = File(tempPath);
+        if (!await tempFile.exists()) {
+          throw StateError('Temp file missing after download');
+        }
+        final stat = await tempFile.stat();
+        if (stat.size == 0) {
+          throw StateError('Downloaded file is empty');
+        }
+
+        // Atomic rename
+        await tempFile.rename(localPath);
+        _logger.info('Model installed successfully: $localPath');
+
+        _setModelState(resolvedLocalName, ModelState.installed);
+        return localPath;
+      } finally {
+        client.close();
       }
-
-      await sink.close();
-      await sink.flush();
-      client.close();
-
-      _logger.info('Model downloaded to temp file: $tempPath');
-
-      // Verify download (basic checks only for direct URLs)
-      final tempFile = File(tempPath);
-      if (!await tempFile.exists()) {
-        throw StateError('Temp file missing after download');
-      }
-      final stat = await tempFile.stat();
-      if (stat.size == 0) {
-        throw StateError('Downloaded file is empty');
-      }
-
-      // Atomic rename
-      await tempFile.rename(localPath);
-      _logger.info('Model installed successfully: $localPath');
-
-      _setModelState(resolvedLocalName, ModelState.installed);
-      return localPath;
     } catch (e, st) {
       _logger.error('Failed to download model', error: e, stackTrace: st);
       await _safeDeleteFile(tempPath);

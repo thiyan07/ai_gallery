@@ -79,6 +79,10 @@ class PhotoMetadataDao {
         'album_id': metadata.albumId,
         'folder_path': metadata.folderPath,
         'media_type': metadata.mediaType,
+        'ocr_status': metadata.ocrStatus.index,
+        'ocr_model_version': metadata.ocrModelVersion,
+        'face_status': metadata.faceStatus.index,
+        'face_model_version': metadata.faceModelVersion,
       };
 
   PhotoMetadata _fromRow(Map<String, Object?> row) {
@@ -112,6 +116,10 @@ class PhotoMetadataDao {
       albumId: row['album_id'] as String?,
       folderPath: row['folder_path'] as String?,
       mediaType: row['media_type'] as String?,
+      ocrStatus: (row['ocr_status'] as int?)?.toOcrStatus() ?? OcrStatus.notProcessed,
+      ocrModelVersion: row['ocr_model_version'] as String?,
+      faceStatus: (row['face_status'] as int?)?.toFaceStatus() ?? FaceStatus.notProcessed,
+      faceModelVersion: row['face_model_version'] as String?,
     );
   }
 }

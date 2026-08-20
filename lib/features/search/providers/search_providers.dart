@@ -1,10 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:ai_gallery/ai/providers/embedding_provider.dart';
-import 'package:ai_gallery/ai/providers/local_embedding_provider.dart';
 import 'package:ai_gallery/core/di/providers.dart';
-import 'package:ai_gallery/domain/models/user_settings.dart';
 import 'package:ai_gallery/features/search/services/search_service.dart';
 import 'package:ai_gallery/features/search/services/natural_language_parser.dart';
 import 'package:ai_gallery/features/search/services/ranking_engine.dart';
@@ -32,15 +29,25 @@ export '../services/search_suggestion_service.dart' show SearchSuggestionService
 // ────────────
 
 /// Natural language query parser provider.
-final naturalLanguageParserProvider = Provider<NaturalLanguageParser>((ref) {
+/// Fetches active person names so the parser can recognize people in queries.
+final naturalLanguageParserProvider = FutureProvider<NaturalLanguageParser>((ref) async {
   final logger = ref.watch(appLoggerProvider);
-  return NaturalLanguageParser.withLogger(logger);
+  final database = ref.watch(appDatabaseProvider).requireValue;
+
+  // Fetch active person names for person recognition in search queries
+  final people = await database.peopleDao.getAllActive();
+  final personNames = people
+      .where((p) => p.displayName != null && p.displayName!.isNotEmpty)
+      .map((p) => p.displayName!)
+      .toList();
+
+  return NaturalLanguageParser.withLogger(logger, personNames: personNames);
 });
 
 /// Parsed query provider - parses the search query and provides structured filters.
 final parsedQueryProvider = FutureProvider<ParsedQuery>((ref) async {
   final query = ref.watch(searchQueryProvider);
-  final parser = ref.watch(naturalLanguageParserProvider);
+  final parserAsync = ref.watch(naturalLanguageParserProvider);
 
   if (query.trim().isEmpty) {
     return ParsedQuery(
@@ -50,6 +57,12 @@ final parsedQueryProvider = FutureProvider<ParsedQuery>((ref) async {
       originalQuery: query,
     );
   }
+
+  final parser = await parserAsync.when(
+    data: (p) => p,
+    loading: () => NaturalLanguageParser(),
+    error: (_, __) => NaturalLanguageParser(),
+  );
 
   return parser.parse(query);
 });
@@ -175,6 +188,7 @@ final searchResultsProvider = FutureProvider<List<RankedSearchResult>>((ref) asy
         maxWidth: manualFilters.maxWidth ?? parsedQuery.filters.maxWidth,
         minHeight: manualFilters.minHeight ?? parsedQuery.filters.minHeight,
         maxHeight: manualFilters.maxHeight ?? parsedQuery.filters.maxHeight,
+        personName: manualFilters.personName ?? parsedQuery.filters.personName,
       );
 
       final searchService = ref.watch(searchServiceProvider);
@@ -234,6 +248,10 @@ class SearchFiltersNotifier extends Notifier<SearchFilters> {
 
   void setFavoritesOnly(bool favoritesOnly) {
     state = state.copyWith(favoritesOnly: favoritesOnly);
+  }
+
+  void setPersonName(String? personName) {
+    state = state.copyWith(personName: personName);
   }
 
   void setDimensions({int? minWidth, int? maxWidth, int? minHeight, int? maxHeight}) {

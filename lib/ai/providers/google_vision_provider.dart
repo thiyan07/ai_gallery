@@ -46,6 +46,9 @@ class GoogleVisionProvider implements EmbeddingProvider, ObjectDetectionProvider
   String get name => 'Google Cloud Vision';
 
   @override
+  String get modelId => 'google-vision-embeddings';
+
+  @override
   Future<bool> get isAvailable async {
     try {
       final key = await _getApiKey();

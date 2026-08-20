@@ -45,6 +45,7 @@ class SearchFilters {
     this.maxWidth,
     this.minHeight,
     this.maxHeight,
+    this.personName,
   });
 
   final DateTime? dateFrom;
@@ -63,44 +64,49 @@ class SearchFilters {
   final int? maxWidth;
   final int? minHeight;
   final int? maxHeight;
+  final String? personName;
 
   SearchFilters copyWith({
-    DateTime? dateFrom,
-    DateTime? dateTo,
-    double? minQualityScore,
-    double? maxBlurScore,
+    Object? dateFrom = _sentinel,
+    Object? dateTo = _sentinel,
+    Object? minQualityScore = _sentinel,
+    Object? maxBlurScore = _sentinel,
     bool? hasLocation,
-    String? cameraMake,
-    String? cameraModel,
-    String? albumId,
-    String? folderPath,
-    String? mediaType,
-    int? orientation,
+    Object? cameraMake = _sentinel,
+    Object? cameraModel = _sentinel,
+    Object? albumId = _sentinel,
+    Object? folderPath = _sentinel,
+    Object? mediaType = _sentinel,
+    Object? orientation = _sentinel,
     bool? favoritesOnly,
-    int? minWidth,
-    int? maxWidth,
-    int? minHeight,
-    int? maxHeight,
+    Object? minWidth = _sentinel,
+    Object? maxWidth = _sentinel,
+    Object? minHeight = _sentinel,
+    Object? maxHeight = _sentinel,
+    Object? personName = _sentinel,
   }) {
     return SearchFilters(
-      dateFrom: dateFrom ?? this.dateFrom,
-      dateTo: dateTo ?? this.dateTo,
-      minQualityScore: minQualityScore ?? this.minQualityScore,
-      maxBlurScore: maxBlurScore ?? this.maxBlurScore,
+      dateFrom: dateFrom == _sentinel ? this.dateFrom : dateFrom as DateTime?,
+      dateTo: dateTo == _sentinel ? this.dateTo : dateTo as DateTime?,
+      minQualityScore: minQualityScore == _sentinel ? this.minQualityScore : minQualityScore as double?,
+      maxBlurScore: maxBlurScore == _sentinel ? this.maxBlurScore : maxBlurScore as double?,
       hasLocation: hasLocation ?? this.hasLocation,
-      cameraMake: cameraMake ?? this.cameraMake,
-      cameraModel: cameraModel ?? this.cameraModel,
-      albumId: albumId ?? this.albumId,
-      folderPath: folderPath ?? this.folderPath,
-      mediaType: mediaType ?? this.mediaType,
-      orientation: orientation ?? this.orientation,
+      cameraMake: cameraMake == _sentinel ? this.cameraMake : cameraMake as String?,
+      cameraModel: cameraModel == _sentinel ? this.cameraModel : cameraModel as String?,
+      albumId: albumId == _sentinel ? this.albumId : albumId as String?,
+      folderPath: folderPath == _sentinel ? this.folderPath : folderPath as String?,
+      mediaType: mediaType == _sentinel ? this.mediaType : mediaType as String?,
+      orientation: orientation == _sentinel ? this.orientation : orientation as int?,
       favoritesOnly: favoritesOnly ?? this.favoritesOnly,
-      minWidth: minWidth ?? this.minWidth,
-      maxWidth: maxWidth ?? this.maxWidth,
-      minHeight: minHeight ?? this.minHeight,
-      maxHeight: maxHeight ?? this.maxHeight,
+      minWidth: minWidth == _sentinel ? this.minWidth : minWidth as int?,
+      maxWidth: maxWidth == _sentinel ? this.maxWidth : maxWidth as int?,
+      minHeight: minHeight == _sentinel ? this.minHeight : minHeight as int?,
+      maxHeight: maxHeight == _sentinel ? this.maxHeight : maxHeight as int?,
+      personName: personName == _sentinel ? this.personName : personName as String?,
     );
   }
+
+  static const _sentinel = Object();
 
   /// Whether any filters are active (excluding pagination/fulltext).
   bool get hasActiveFilters =>
@@ -119,7 +125,8 @@ class SearchFilters {
       minWidth != null ||
       maxWidth != null ||
       minHeight != null ||
-      maxHeight != null;
+      maxHeight != null ||
+      personName != null;
 }
 
 /// Service for performing semantic search over photo embeddings.
@@ -144,7 +151,10 @@ class SearchService {
   /// Maximum embeddings to cache in memory.
   static const _maxCacheSize = 10000;
 
-  /// Performs a text-based semantic search with ranking.
+  /// The active model ID for filtering embeddings.
+  String get _activeModelId => embeddingProvider.modelId;
+
+  /// Performs a hybrid search (semantic + OCR text) with ranking.
   Future<List<RankedSearchResult>> search(
     String query, {
     int limit = 20,
@@ -164,37 +174,77 @@ class SearchService {
       unawaited(suggestionService.recordSearch(query));
     }
 
-    // Generate text embedding for query
+    // Generate text embedding for query (semantic search)
     final queryEmbedding = await provider.generateTextEmbedding(query);
 
-    // Get candidate embeddings (from cache or database)
-    final candidates = await _getCandidateEmbeddings(filters);
+    // Get candidate embeddings (from cache or database) for semantic search
+    final semanticCandidates = await _getCandidateEmbeddings(filters);
 
-    // Compute cosine similarity
-    final results = <SearchResult>[];
-    for (final candidate in candidates) {
+    // Compute semantic similarity scores
+    final Map<String, double> semanticScores = {};
+    for (final candidate in semanticCandidates) {
       final score = _cosineSimilarity(queryEmbedding, candidate.vector);
+      semanticScores[candidate.photoId] = score;
+    }
 
-      // Apply filter thresholds using metadata
-      final meta = await database.photoMetadata.getById(candidate.photoId);
-      if (meta != null) {
-        if (filters != null && !_matchesFilters(meta, filters)) continue;
-      } else if (filters?.hasLocation == true || filters?.favoritesOnly == true) {
-        // No metadata - skip if location or favorites required
+    // Get OCR text matches for the query
+    final ocrRecords = await database.ocrResults.searchOcrText(query);
+    // Build a map of photoId to highest OCR confidence for this query
+    final Map<String, double> ocrConfidenceMap = {};
+    for (final record in ocrRecords) {
+      final current = ocrConfidenceMap[record.photoId];
+      if (current == null || record.confidence > current) {
+        ocrConfidenceMap[record.photoId] = record.confidence;
+      }
+    }
+
+    // Combine candidate photoIds from semantic search and OCR text matches
+    final Set<String> allCandidateIds = <String>{};
+    allCandidateIds.addAll(semanticScores.keys);
+    allCandidateIds.addAll(ocrConfidenceMap.keys);
+
+    // Weights for combining scores (can be tuned)
+    const double semanticWeight = 0.7;
+    const double textWeight = 0.3;
+
+    // Build hybrid search results
+    final results = <SearchResult>[];
+    for (final photoId in allCandidateIds) {
+      // Get metadata for filtering and result
+      final meta = await database.photoMetadata.getById(photoId);
+      if (meta == null) {
+        // Skip if no metadata (should not happen for indexed photos, but safe)
         continue;
       }
 
-      results.add(SearchResult(
-        photoId: candidate.photoId,
-        score: score,
-        metadata: meta,
-      ));
+      // Apply filters
+      if (filters != null && !await _matchesFilters(meta, filters)) {
+        continue;
+      }
+      // Skip if location required but none available
+      if (filters?.hasLocation == true &&
+          (meta.latitude == null || meta.longitude == null)) {
+        continue;
+      }
+
+      // Get semantic score (default 0.0 if not in semantic candidates)
+      final semanticScore = semanticScores[photoId] ?? 0.0;
+      // Get OCR text match score (default 0.0 if no OCR match for this photo)
+      final textMatchScore = ocrConfidenceMap[photoId] ?? 0.0;
+
+      // Combine scores
+      final double combinedScore =
+          (semanticScore * semanticWeight) + (textMatchScore * textWeight);
+
+      results.add(
+        SearchResult(photoId: photoId, score: combinedScore, metadata: meta),
+      );
     }
 
-    // Sort by score descending
+    // Sort by combined score descending
     results.sort((a, b) => b.score.compareTo(a.score));
 
-    // Apply ranking engine
+    // Apply ranking engine (using the combined score as the initial score)
     final rankedResults = await rankingEngine.rank(
       results.take(limit * 3).toList(), // Get more candidates for ranking
       context: rankingContext,
@@ -205,7 +255,10 @@ class SearchService {
   }
 
   /// Checks if metadata matches all active filters.
-  bool _matchesFilters(PhotoMetadata meta, SearchFilters filters) {
+  Future<bool> _matchesFilters(
+    PhotoMetadata meta,
+    SearchFilters filters,
+  ) async {
     if (filters.minQualityScore != null &&
         (meta.qualityScore ?? 0) < filters.minQualityScore!) {
       return false;
@@ -230,8 +283,7 @@ class SearchService {
         (meta.latitude == null || meta.longitude == null)) {
       return false;
     }
-    if (filters.cameraMake != null &&
-        meta.cameraMake != filters.cameraMake) {
+    if (filters.cameraMake != null && meta.cameraMake != filters.cameraMake) {
       return false;
     }
     if (filters.cameraModel != null &&
@@ -247,7 +299,8 @@ class SearchService {
     if (filters.mediaType != null && meta.mediaType != filters.mediaType) {
       return false;
     }
-    if (filters.orientation != null && meta.orientation != filters.orientation) {
+    if (filters.orientation != null &&
+        meta.orientation != filters.orientation) {
       return false;
     }
     if (filters.minWidth != null && meta.width < filters.minWidth!) {
@@ -262,6 +315,12 @@ class SearchService {
     if (filters.maxHeight != null && meta.height > filters.maxHeight!) {
       return false;
     }
+    if (filters.favoritesOnly == true) {
+      final isFavorite = await database.favorites.isFavorite(meta.photoId);
+      if (!isFavorite) {
+        return false;
+      }
+    }
     return true;
   }
 
@@ -275,18 +334,39 @@ class SearchService {
     RankingContext? rankingContext,
     bool recordSuggestion = true,
   }) async {
-    if (parsedQuery.semanticQuery.trim().isEmpty) return [];
+    final hasSemanticQuery = parsedQuery.semanticQuery.trim().isNotEmpty;
+    final hasPersonFilter = parsedQuery.filters.personName != null;
 
-    _logger.info('Searching with parsed query: "${parsedQuery.semanticQuery}"'
-        ' (filters: ${parsedQuery.confidence})');
+    if (!hasSemanticQuery && !hasPersonFilter) return [];
+
+    _logger.info(
+      'Searching with parsed query: "${parsedQuery.semanticQuery}"'
+      ' (filters: ${parsedQuery.confidence})',
+    );
 
     // Record search suggestion
     if (recordSuggestion) {
-      unawaited(suggestionService.recordSearch(parsedQuery.originalQuery ?? parsedQuery.semanticQuery));
+      unawaited(
+        suggestionService.recordSearch(
+          parsedQuery.originalQuery ?? parsedQuery.semanticQuery,
+        ),
+      );
+    }
+
+    // If only person filter (no semantic query), use person-only search
+    if (!hasSemanticQuery && hasPersonFilter) {
+      return searchByPerson(
+        parsedQuery.filters.personName!,
+        limit: limit,
+        filters: parsedQuery.filters,
+        rankingContext: rankingContext,
+      );
     }
 
     // Use the semantic query for embedding generation
-    final queryEmbedding = await embeddingProvider.generateTextEmbedding(parsedQuery.semanticQuery);
+    final queryEmbedding = await embeddingProvider.generateTextEmbedding(
+      parsedQuery.semanticQuery,
+    );
 
     // Get candidate embeddings with filters applied
     final candidates = await _getCandidateEmbeddings(parsedQuery.filters);
@@ -299,16 +379,15 @@ class SearchService {
       // Apply filter thresholds using metadata (redundant with _getCandidateEmbeddings but safe)
       final meta = await database.photoMetadata.getById(candidate.photoId);
       if (meta != null) {
-        if (!_matchesFilters(meta, parsedQuery.filters)) continue;
-      } else if (parsedQuery.filters.hasLocation == true || parsedQuery.filters.favoritesOnly == true) {
+        if (!await _matchesFilters(meta, parsedQuery.filters)) continue;
+      } else if (parsedQuery.filters.hasLocation == true ||
+          parsedQuery.filters.favoritesOnly == true) {
         continue;
       }
 
-      results.add(SearchResult(
-        photoId: candidate.photoId,
-        score: score,
-        metadata: meta,
-      ));
+      results.add(
+        SearchResult(photoId: candidate.photoId, score: score, metadata: meta),
+      );
     }
 
     // Sort by score descending
@@ -333,7 +412,9 @@ class SearchService {
   }) async {
     _logger.info('Reverse image search');
 
-    final queryEmbedding = await embeddingProvider.generateEmbedding(imageBytes);
+    final queryEmbedding = await embeddingProvider.generateEmbedding(
+      imageBytes,
+    );
 
     final candidates = await _getCandidateEmbeddings(filters);
 
@@ -341,17 +422,63 @@ class SearchService {
     for (final candidate in candidates) {
       final score = _cosineSimilarity(queryEmbedding, candidate.vector);
       final meta = await database.photoMetadata.getById(candidate.photoId);
-      if (meta != null && filters != null && !_matchesFilters(meta, filters)) continue;
-      results.add(SearchResult(
-        photoId: candidate.photoId,
-        score: score,
-        metadata: meta,
-      ));
+      if (meta == null) continue;
+      if (filters != null && !await _matchesFilters(meta, filters)) continue;
+      results.add(
+        SearchResult(photoId: candidate.photoId, score: score, metadata: meta),
+      );
     }
 
     results.sort((a, b) => b.score.compareTo(a.score));
 
     // Apply ranking engine
+    final rankedResults = await rankingEngine.rank(
+      results.take(limit * 3).toList(),
+      context: rankingContext,
+    );
+
+    return rankedResults.take(limit).toList();
+  }
+
+  /// Search for photos containing a specific person by name.
+  ///
+  /// Finds all faces assigned to the person, then returns the associated photos.
+  /// Optionally combines with other filters.
+  Future<List<RankedSearchResult>> searchByPerson(
+    String personName, {
+    int limit = 50,
+    SearchFilters? filters,
+    RankingContext? rankingContext,
+  }) async {
+    _logger.info('Searching for person: "$personName"');
+
+    // Find person by name (case-insensitive)
+    final person = await database.peopleDao.getByDisplayName(personName);
+    if (person == null) {
+      _logger.info('No person found with name: "$personName"');
+      return [];
+    }
+
+    // Get all face photo IDs for this person
+    final faces = await database.faces.getByPersonId(person.personId);
+    if (faces.isEmpty) return [];
+
+    final photoIds = faces.map((f) => f.photoId).toSet();
+
+    // Build results
+    final results = <SearchResult>[];
+    for (final photoId in photoIds) {
+      final meta = await database.photoMetadata.getById(photoId);
+      if (meta == null) continue;
+      if (filters != null && !await _matchesFilters(meta, filters)) continue;
+
+      results.add(
+        SearchResult(photoId: photoId, score: 1.0, metadata: meta),
+      );
+    }
+
+    results.sort((a, b) => b.score.compareTo(a.score));
+
     final rankedResults = await rankingEngine.rank(
       results.take(limit * 3).toList(),
       context: rankingContext,
@@ -380,12 +507,11 @@ class SearchService {
       if (candidate.photoId == photoId) continue; // Skip self
       final score = _cosineSimilarity(queryEmbedding, candidate.vector);
       final meta = await database.photoMetadata.getById(candidate.photoId);
-      if (meta != null && filters != null && !_matchesFilters(meta, filters)) continue;
-      results.add(SearchResult(
-        photoId: candidate.photoId,
-        score: score,
-        metadata: meta,
-      ));
+      if (meta == null) continue;
+      if (filters != null && !await _matchesFilters(meta, filters)) continue;
+      results.add(
+        SearchResult(photoId: candidate.photoId, score: score, metadata: meta),
+      );
     }
 
     results.sort((a, b) => b.score.compareTo(a.score));
@@ -400,16 +526,32 @@ class SearchService {
   }
 
   /// Get all embeddings matching filters (with caching).
-  Future<List<Embedding>> _getCandidateEmbeddings(SearchFilters? filters) async {
-    // If cache is populated and no complex filters, use cache
+  Future<List<Embedding>> _getCandidateEmbeddings(
+    SearchFilters? filters,
+  ) async {
+    // Get the active model ID to filter embeddings - only compare embeddings from the same model
+    final activeModelId = _activeModelId;
+
+    // If cache is populated and no complex filters, use cache (filtered by model)
     if (_embeddingCache.isNotEmpty &&
         (filters == null || !filters.hasActiveFilters)) {
+      if (activeModelId.isNotEmpty && activeModelId != 'unknown') {
+        return _embeddingCache.values
+            .where((e) => e.model == activeModelId)
+            .toList();
+      }
       return _embeddingCache.values.toList();
     }
 
     // Otherwise fetch from database with filters
     final whereConditions = <String>[];
     final whereArgs = <Object>[];
+
+    // CRITICAL: Filter by active model ID to prevent embedding-space mixing
+    if (activeModelId.isNotEmpty && activeModelId != 'unknown') {
+      whereConditions.add('e.model = ?');
+      whereArgs.add(activeModelId);
+    }
 
     if (filters?.dateFrom != null) {
       whereConditions.add('pm.date_created >= ?');
@@ -428,7 +570,9 @@ class SearchService {
       whereArgs.add(filters!.maxBlurScore!);
     }
     if (filters?.hasLocation == true) {
-      whereConditions.add('pm.latitude IS NOT NULL AND pm.longitude IS NOT NULL');
+      whereConditions.add(
+        'pm.latitude IS NOT NULL AND pm.longitude IS NOT NULL',
+      );
     }
     if (filters?.cameraMake != null) {
       whereConditions.add('pm.camera_make = ?');
@@ -477,6 +621,18 @@ class SearchService {
       favoritesJoin = 'INNER JOIN favorites f ON e.photo_id = f.asset_id';
     }
 
+    // Handle personName filter - need to join with faces table
+    String personJoin = '';
+    if (filters?.personName != null) {
+      personJoin = '''
+        INNER JOIN faces fc ON e.photo_id = fc.photo_id
+        INNER JOIN people pp ON fc.person_id = pp.person_id
+          AND pp.status = 'active'
+      ''';
+      whereConditions.add('LOWER(pp.display_name) = LOWER(?)');
+      whereArgs.add(filters!.personName!);
+    }
+
     final whereClause = whereConditions.isEmpty
         ? ''
         : 'WHERE ${whereConditions.join(' AND ')}';
@@ -486,7 +642,9 @@ class SearchService {
       FROM embeddings e
       LEFT JOIN photo_metadata pm ON e.photo_id = pm.photo_id
       $favoritesJoin
+      $personJoin
       $whereClause
+      GROUP BY e.photo_id
     ''', whereArgs);
 
     final embeddings = <Embedding>[];
@@ -514,14 +672,27 @@ class SearchService {
   Future<Float32List?> _getEmbedding(String photoId) async {
     // Check cache first
     if (_embeddingCache.containsKey(photoId)) {
-      return _embeddingCache[photoId]!.vector;
+      final cached = _embeddingCache[photoId]!;
+      // Verify model matches
+      if (cached.model == _activeModelId) {
+        return cached.vector;
+      }
     }
 
-    // Fetch from database
+    // Fetch from database with model filter
+    final activeModelId = _activeModelId;
+    String whereClause = 'photo_id = ?';
+    List<Object> whereArgs = [photoId];
+
+    if (activeModelId.isNotEmpty && activeModelId != 'unknown') {
+      whereClause += ' AND model = ?';
+      whereArgs.add(activeModelId);
+    }
+
     final row = await database.database.query(
       'embeddings',
-      where: 'photo_id = ?',
-      whereArgs: [photoId],
+      where: whereClause,
+      whereArgs: whereArgs,
       limit: 1,
     );
 
@@ -569,11 +740,25 @@ class SearchService {
 
   /// Preload embeddings into cache (call on app startup or after indexing).
   Future<void> preloadCache({int limit = 5000}) async {
-    _logger.info('Preloading embedding cache...');
-    final rows = await database.database.query(
-      'embeddings',
-      columns: ['photo_id', 'model', 'vector', 'created_at'],
-      limit: limit,
+    _logger.info('Preloading embedding cache for model: $_activeModelId');
+    final activeModelId = _activeModelId;
+
+    String whereClause = '';
+    List<Object> whereArgs = [];
+
+    if (activeModelId.isNotEmpty && activeModelId != 'unknown') {
+      whereClause = 'WHERE model = ?';
+      whereArgs = [activeModelId];
+    }
+
+    final rows = await database.database.rawQuery(
+      '''
+      SELECT photo_id, model, vector, created_at
+      FROM embeddings
+      $whereClause
+      LIMIT ?
+    ''',
+      [...whereArgs, limit],
     );
 
     for (final row in rows) {
@@ -587,6 +772,8 @@ class SearchService {
       );
     }
 
-    _logger.info('Cached ${_embeddingCache.length} embeddings');
+    _logger.info(
+      'Cached ${_embeddingCache.length} embeddings for model $_activeModelId',
+    );
   }
 }

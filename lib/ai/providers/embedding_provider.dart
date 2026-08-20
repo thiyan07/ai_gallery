@@ -11,11 +11,16 @@ import '../../domain/models/face_detection.dart';
 /// - OpenAI Embeddings
 /// - Custom models
 abstract class EmbeddingProvider {
-  /// Unique identifier for this provider.
+  /// Unique identifier for this provider (e.g., "local_siglip-base-patch16-224").
   String get id;
 
   /// Human-readable name for this provider.
   String get name;
+
+  /// The actual model ID/version used for embedding generation.
+  /// This is stored with embeddings to prevent mixing embeddings from different models.
+  /// Examples: "siglip-base-patch16-224", "mobileclip-s1", "clip-vit-base-patch32"
+  String get modelId;
 
   /// Whether this provider is available (e.g., API key configured).
   Future<bool> get isAvailable;

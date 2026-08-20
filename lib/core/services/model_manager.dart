@@ -1,4 +1,4 @@
-import '../services/model_downloader.dart' show ModelDownloader, ModelDownloadResult, ModelState, DownloadedModel;
+import '../services/model_downloader.dart';
 import '../logging/app_logger.dart';
 
 /// Manages ONNX models: downloading, selection, and provider integration.

@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:ai_gallery/domain/models/face_detection.dart';
 import 'package:sqflite/sqflite.dart';
 
@@ -41,6 +43,28 @@ class FaceDao {
     return rows.map(FaceDetectionRecord.fromMap).toList();
   }
 
+  /// Get a face by its ID.
+  Future<FaceDetectionRecord?> getFaceById(String faceId) async {
+    final rows = await _db.query(
+      tableName,
+      where: 'id = ?',
+      whereArgs: [faceId],
+      limit: 1,
+    );
+    if (rows.isEmpty) return null;
+    return FaceDetectionRecord.fromMap(rows.first);
+  }
+
+  /// Get faces by person ID.
+  Future<List<FaceDetectionRecord>> getFacesByPersonId(String personId) async {
+    final rows = await _db.query(
+      tableName,
+      where: 'person_id = ?',
+      whereArgs: [personId],
+    );
+    return rows.map(FaceDetectionRecord.fromMap).toList();
+  }
+
   /// Get all faces that have embeddings (for clustering).
   Future<List<FaceDetectionRecord>> getFacesWithEmbeddings({
     int limit = 1000,
@@ -49,11 +73,31 @@ class FaceDao {
     final rows = await _db.query(
       tableName,
       where: 'embedding IS NOT NULL AND embedding != ?',
-      whereArgs: [[]],
+      whereArgs: [Uint8List(0)],
       limit: limit,
       offset: offset,
     );
     return rows.map(FaceDetectionRecord.fromMap).toList();
+  }
+
+  /// Get all faces that have both a label and embedding (for clustering operations).
+  Future<List<FaceDetectionRecord>> getLabelledFacesWithEmbeddings() async {
+    final rows = await _db.query(
+      tableName,
+      where: 'label IS NOT NULL AND label != ? AND embedding IS NOT NULL AND embedding != ?',
+      whereArgs: ['', Uint8List(0)],
+    );
+    return rows.map(FaceDetectionRecord.fromMap).toList();
+  }
+
+  /// Update all faces with a source label to have a target label.
+  Future<void> updateFacesLabel(String sourceLabel, String targetLabel) async {
+    await _db.update(
+      tableName,
+      {'label': targetLabel},
+      where: 'label = ?',
+      whereArgs: [sourceLabel],
+    );
   }
 
   /// Get all faces that have been clustered (have a label).
@@ -62,6 +106,34 @@ class FaceDao {
       tableName,
       where: 'label IS NOT NULL AND label != ?',
       whereArgs: [''],
+    );
+    return rows.map(FaceDetectionRecord.fromMap).toList();
+  }
+
+  /// Get all faces that are assigned to a person (have person_id).
+  Future<List<FaceDetectionRecord>> getFacesWithPerson() async {
+    final rows = await _db.query(
+      tableName,
+      where: 'person_id IS NOT NULL',
+    );
+    return rows.map(FaceDetectionRecord.fromMap).toList();
+  }
+
+  /// Get all faces assigned to a specific person.
+  Future<List<FaceDetectionRecord>> getByPersonId(String personId) async {
+    final rows = await _db.query(
+      tableName,
+      where: 'person_id = ?',
+      whereArgs: [personId],
+    );
+    return rows.map(FaceDetectionRecord.fromMap).toList();
+  }
+
+  /// Get all faces that are unassigned (no person_id).
+  Future<List<FaceDetectionRecord>> getUnassignedFaces() async {
+    final rows = await _db.query(
+      tableName,
+      where: 'person_id IS NULL',
     );
     return rows.map(FaceDetectionRecord.fromMap).toList();
   }
@@ -76,6 +148,16 @@ class FaceDao {
     );
   }
 
+  /// Update the person ID for a specific face.
+  Future<void> updateFacePerson(String faceId, String? personId) async {
+    await _db.update(
+      tableName,
+      {'person_id': personId},
+      where: 'id = ?',
+      whereArgs: [faceId],
+    );
+  }
+
   /// Merge all faces with a source label into a target label.
   Future<void> mergeFaceLabels(String sourceLabel, String targetLabel) async {
     await _db.update(
@@ -83,6 +165,44 @@ class FaceDao {
       {'label': targetLabel},
       where: 'label = ?',
       whereArgs: [sourceLabel],
+    );
+  }
+
+  /// Assign multiple faces to a person.
+  Future<void> assignFacesToPerson(List<String> faceIds, String personId) async {
+    final batch = _db.batch();
+    for (final faceId in faceIds) {
+      batch.update(
+        tableName,
+        {'person_id': personId},
+        where: 'id = ?',
+        whereArgs: [faceId],
+      );
+    }
+    await batch.commit();
+  }
+
+  /// Remove person assignment from multiple faces.
+  Future<void> removeFacesFromPerson(List<String> faceIds) async {
+    final batch = _db.batch();
+    for (final faceId in faceIds) {
+      batch.update(
+        tableName,
+        {'person_id': null},
+        where: 'id = ?',
+        whereArgs: [faceId],
+      );
+    }
+    await batch.commit();
+  }
+
+  /// Merge all faces with a source person into a target person.
+  Future<void> mergePersons(String sourcePersonId, String targetPersonId) async {
+    await _db.update(
+      tableName,
+      {'person_id': targetPersonId},
+      where: 'person_id = ?',
+      whereArgs: [sourcePersonId],
     );
   }
 

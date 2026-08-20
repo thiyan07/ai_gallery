@@ -170,9 +170,14 @@ class BackgroundJobQueue {
     // Notify worker to process if idle
     final status = await _sendToWorker(GetStatus());
     if (status.status != null && !status.status!.isProcessing) {
-      final msg = ProcessJob(jobId: job.id);
-      msg.replyPort = ReceivePort().sendPort;
-      await _sendToWorker(msg);
+      final replyPort = ReceivePort();
+      try {
+        final msg = ProcessJob(jobId: job.id);
+        msg.replyPort = replyPort.sendPort;
+        await _sendToWorker(msg);
+      } finally {
+        replyPort.close();
+      }
     }
   }
 
@@ -238,9 +243,14 @@ class BackgroundJobQueue {
 
   /// Manually triggers processing of a specific job.
   Future<void> processJob(String jobId) async {
-    final msg = ProcessJob(jobId: jobId);
-    msg.replyPort = ReceivePort().sendPort;
-    await _sendToWorker(msg);
+    final replyPort = ReceivePort();
+    try {
+      final msg = ProcessJob(jobId: jobId);
+      msg.replyPort = replyPort.sendPort;
+      await _sendToWorker(msg);
+    } finally {
+      replyPort.close();
+    }
   }
 
   /// Gets the current worker status.
@@ -254,6 +264,14 @@ class BackgroundJobQueue {
     if (controller != null && !controller.isClosed) {
       controller.add(job);
     }
+    if (job.status == AIJobStatus.completed ||
+        job.status == AIJobStatus.failed ||
+        job.status == AIJobStatus.cancelled) {
+      final c = _jobControllers.remove(job.id);
+      if (c != null && !c.isClosed) {
+        c.close();
+      }
+    }
   }
 
   /// Shuts down the worker isolate and releases resources.
@@ -261,9 +279,14 @@ class BackgroundJobQueue {
     _logger.info('Disposing background job queue');
 
     if (_workerSendPort != null && _isInitialized) {
-      final msg = StopWorker();
-      msg.replyPort = ReceivePort().sendPort;
-      await _sendToWorker(msg);
+      final replyPort = ReceivePort();
+      try {
+        final msg = StopWorker();
+        msg.replyPort = replyPort.sendPort;
+        await _sendToWorker(msg);
+      } finally {
+        replyPort.close();
+      }
     }
 
     _workerIsolate?.kill(priority: Isolate.immediate);
