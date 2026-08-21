@@ -53,9 +53,7 @@ void main() {
     tearDown(() async {
       await database.dispose();
       // Delete the temporary directory
-      if (tempDir != null) {
-        await tempDir.delete(recursive: true);
-      }
+      await tempDir.delete(recursive: true);
     });
 
     group('Cosine Similarity', () {

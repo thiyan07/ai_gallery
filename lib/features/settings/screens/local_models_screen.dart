@@ -16,9 +16,6 @@ class LocalModelsScreen extends ConsumerStatefulWidget {
 
 class _LocalModelsScreenState extends ConsumerState<LocalModelsScreen> {
   late Stream<List<DownloadedModel>> _downloadedModelsStream;
-  ModelDownloadResult? _currentDownloadResult;
-  ModelState? _currentDownloadState;
-  String? _currentDownloadingModel;
 
   @override
   void initState() {
@@ -32,19 +29,6 @@ class _LocalModelsScreenState extends ConsumerState<LocalModelsScreen> {
       yield await modelManager.getDownloadedModels();
       await Future.delayed(const Duration(seconds: 2));
     }
-  }
-
-  /// Get current download state for a model.
-  ModelState _getModelDownloadState(String modelName) {
-    if (_currentDownloadingModel != modelName) return ModelState.notInstalled;
-    return _currentDownloadState ?? ModelState.downloading;
-  }
-
-  /// Get progress for a model being downloaded.
-  double _getModelDownloadProgress(String modelName) {
-    if (_currentDownloadingModel != modelName) return 0.0;
-    // We'll track progress in the download dialog
-    return _currentDownloadResult != null && _currentDownloadResult!.isSuccess ? 1.0 : 0.0;
   }
 
   @override
@@ -786,7 +770,6 @@ class _DownloadProgressDialogState extends ConsumerState<_DownloadProgressDialog
   double _progress = 0.0;
   String _status = 'Preparing...';
   String? _error;
-  ModelState? _currentState;
 
   @override
   void initState() {
@@ -801,7 +784,6 @@ class _DownloadProgressDialogState extends ConsumerState<_DownloadProgressDialog
       setState(() {
         _status = 'Downloading...';
         _progress = 0.0;
-        _currentState = ModelState.downloading;
       });
 
       final result = await widget.modelManager.getSelectedModelPath(
@@ -816,7 +798,6 @@ class _DownloadProgressDialogState extends ConsumerState<_DownloadProgressDialog
         stateCallback: (state) {
           if (mounted) {
             setState(() {
-              _currentState = state;
               switch (state) {
                 case ModelState.downloading:
                   _status = 'Downloading... ${(_progress * 100).toInt()}%';
@@ -844,7 +825,6 @@ class _DownloadProgressDialogState extends ConsumerState<_DownloadProgressDialog
           setState(() {
             _progress = 1.0;
             _status = 'Download complete!';
-            _currentState = ModelState.installed;
           });
           await Future.delayed(const Duration(milliseconds: 500));
           if (mounted) Navigator.pop(context);
@@ -852,7 +832,6 @@ class _DownloadProgressDialogState extends ConsumerState<_DownloadProgressDialog
           setState(() {
             _error = 'Download failed: ${result.errorMessage ?? 'Unknown error'}';
             _status = 'Failed';
-            _currentState = ModelState.failed;
           });
         }
       }
@@ -862,7 +841,6 @@ class _DownloadProgressDialogState extends ConsumerState<_DownloadProgressDialog
         setState(() {
           _error = 'Download failed: $e';
           _status = 'Failed';
-          _currentState = ModelState.failed;
         });
       }
     }

@@ -8,10 +8,8 @@ import 'package:image/image.dart' as img;
 import 'package:onnxruntime/onnxruntime.dart';
 
 import '../../core/logging/app_logger.dart';
-import '../../core/services/model_downloader.dart';
 import '../../core/services/model_manager.dart';
 import '../../core/utils/device_capabilities.dart';
-import '../../domain/models/ocr.dart';
 import '../../domain/models/object_detection_model.dart';
 import 'object_detection_provider.dart';
 
@@ -96,7 +94,7 @@ class PaddleOcrProvider implements ObjectDetectionProvider {
 
       // Load charset if provided
       if (_charsetPath != null) {
-        _charset = await _loadCharset(_charsetPath!);
+        _charset = await _loadCharset(_charsetPath);
       }
 
       // Initialize detector

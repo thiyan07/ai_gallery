@@ -332,10 +332,11 @@ class BlazeFaceProvider implements FaceDetectionProvider {
     }
 
     final detections = <FaceDetection>[];
-    final scaleX = imageWidth / _inputSize;
-    final scaleY = imageHeight / _inputSize;
 
     // First pass: extract all detections above threshold
+    // Bounding boxes / keypoints are normalized to [0,1] of the model input,
+    // so no explicit scaling to image dimensions is required (consumers expect
+    // normalized coordinates).
     final rawDetections = <_RawDetection>[];
 
     for (var i = 0; i < _numAnchors; i++) {

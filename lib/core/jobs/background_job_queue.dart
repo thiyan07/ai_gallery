@@ -45,10 +45,6 @@ class BackgroundJobQueue {
   final _statusController = StreamController<WorkerStatus>.broadcast();
 
   bool _isInitialized = false;
-  bool _isProcessing = false;
-  String? _currentJobId;
-  int _jobsProcessed = 0;
-  int _jobsFailed = 0;
 
   /// Initializes the queue and spawns the worker isolate.
   Future<void> initialize() async {
@@ -119,10 +115,6 @@ class BackgroundJobQueue {
     }
 
     if (message is StatusUpdate) {
-      _jobsProcessed = message.jobsProcessed;
-      _jobsFailed = message.jobsFailed;
-      _isProcessing = message.isProcessing;
-      _currentJobId = message.currentJobId;
       _statusController.add(WorkerStatus(
         isRunning: true,
         isProcessing: message.isProcessing,

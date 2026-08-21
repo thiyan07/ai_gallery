@@ -152,9 +152,6 @@ class _PhotoViewScreenState extends ConsumerState<PhotoViewScreen> {
       return;
     }
 
-    // Extract asset IDs from results and load them
-    final photoIds = results.map((r) => r.photoId).toList();
-
     // Navigate to photo view screen with similar photos
     Navigator.of(context).push(
       MaterialPageRoute(

@@ -30,7 +30,6 @@ import 'package:ai_gallery/data/mappers/photo_mapper.dart';
 import 'package:ai_gallery/data/repositories/device_photo_repository.dart';
 import 'package:ai_gallery/domain/models/ai_job.dart';
 import 'package:ai_gallery/domain/models/user_settings.dart';
-import 'package:ai_gallery/domain/repositories/settings_repository.dart';
 
 // ─────────────────────────────────────────────
 // Worker Protocol Messages
@@ -175,7 +174,6 @@ AppDatabase? _database;
 AiJobDao? _jobDao;
 
 AIJobProcessor? _processor;
-SettingsRepository? _settingsRepository;
 ModelManager? _modelManager;
 AppLogger _logger = const ConsoleAppLogger();
 
@@ -285,7 +283,7 @@ Future<void> _handleStart(StartWorker message) async {
         detectorAssetPath: 'assets/models/ppocr_det.onnx',
         recognizerAssetPath: 'assets/models/ppocr_rec.onnx',
       );
-      await ocrProvider!.initialize();
+      await ocrProvider.initialize();
 
       _logger.info('AI providers initialized in worker');
     }
@@ -306,8 +304,6 @@ Future<void> _handleStart(StartWorker message) async {
       faceDetectionProvider: faceDetectionProvider,
       ocrProvider: ocrProvider,
     );
-
-    _settingsRepository = _WorkerSettingsRepository(settings);
 
     _isRunning = true;
     _jobsProcessed = 0;
@@ -421,7 +417,6 @@ Future<void> _handleStop(StopWorker message) async {
   _database = null;
   _jobDao = null;
   _processor = null;
-  _settingsRepository = null;
   _modelManager = null;
   _mainSendPort = null;
 
@@ -514,44 +509,3 @@ abstract class Disposable {
   void dispose();
 }
 
-/// Minimal settings repository for worker isolate.
-class _WorkerSettingsRepository implements SettingsRepository {
-  _WorkerSettingsRepository(this._settings);
-  final UserSettings _settings;
-
-  @override
-  UserSettings getSettings() => _settings;
-
-  @override
-  Future<void> saveSettings(UserSettings settings) async {}
-
-  @override
-  Future<void> setThemeMode(String mode) async {}
-
-  @override
-  Future<void> setAccentColor(int color) async {}
-
-  @override
-  Future<void> setOnboardingCompleted(bool completed) async {}
-
-  @override
-  Future<void> setTelemetryEnabled(bool enabled) async {}
-
-  @override
-  Future<void> setCloudBackupEnabled(bool enabled) async {}
-
-  @override
-  Future<void> setStoragePath(String? path) async {}
-
-  @override
-  Future<void> setSyncWifiOnly(bool wifiOnly) async {}
-
-  @override
-  Future<void> setSyncFrequency(String frequency) async {}
-
-  @override
-  Future<void> setAiMode(AiMode mode) async {}
-
-  @override
-  Future<void> setGridSize(int columns) async {}
-}

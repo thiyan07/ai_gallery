@@ -310,8 +310,6 @@ class AppDatabase {
 
     for (final row in distinctLabels) {
       final label = row['label'] as String;
-      if (label == null || label.isEmpty) continue;
-
       // Generate a person_id based on the label to maintain consistency
       final personId = 'person_${label.hashCode.abs()}';
 

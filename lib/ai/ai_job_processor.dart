@@ -198,35 +198,25 @@ class AIJobProcessor {
 
     await onProgress(job.id, 0.1);
 
-    final photoMetadata = await database.photoMetadata.getById(job.photoId);
-    if (photoMetadata != null) {
-      final currentFaceModelVersion =
-          '${faceEmbeddingProvider?.id ?? 'unknown'}_v1';
-      if (photoMetadata.faceStatus == FaceStatus.completed &&
-          photoMetadata.faceModelVersion == currentFaceModelVersion) {
-        logger.info(
-          'Face embedding already completed for photo ${job.photoId} with model version $currentFaceModelVersion, skipping',
-        );
-        await onProgress(job.id, 1.0);
-        return;
-      }
-
-      final updatedMetadata = photoMetadata.copyWith(
-        faceStatus: FaceStatus.processing,
-        faceModelVersion: currentFaceModelVersion,
+    // Dedup: if faces for this photo already have embeddings, skip reprocessing.
+    // We deliberately do NOT touch faceStatus/faceModelVersion here because
+    // those track Face *Detection* (a separate job). Overwriting them with the
+    // embedding model's id would cause the detection job to re-run needlessly
+    // on every queue cycle (version mismatch ping-pong).
+    final existingFaces = await database.faces.getFacesByPhotoId(job.photoId);
+    final alreadyHasEmbeddings =
+        existingFaces.isNotEmpty && existingFaces.every((f) => f.embedding != null);
+    if (alreadyHasEmbeddings) {
+      logger.info(
+        'Face embedding already completed for photo ${job.photoId}, skipping',
       );
-      await database.photoMetadata.upsert(updatedMetadata);
+      await onProgress(job.id, 1.0);
+      return;
     }
 
     final imageBytes = await photoRepository.getImageBytes(job.photoId);
     if (imageBytes == null) {
       logger.warning('Failed to load image bytes for photo ${job.photoId}');
-      if (photoMetadata != null) {
-        final updatedMetadata = photoMetadata.copyWith(
-          faceStatus: FaceStatus.failed,
-        );
-        await database.photoMetadata.upsert(updatedMetadata);
-      }
       await onProgress(job.id, 1.0);
       return;
     }
@@ -236,14 +226,7 @@ class AIJobProcessor {
     final faces = await faceDetectionProvider!.detectFaces(imageBytes);
     if (faces.isEmpty) {
       logger.info('No faces detected for face embedding');
-      await database.faces.deleteFacesByPhotoId(job.photoId);
-      await _saveFaceDetections(job.photoId, faces);
-      if (photoMetadata != null) {
-        final updatedMetadata = photoMetadata.copyWith(
-          faceStatus: FaceStatus.noFaces,
-        );
-        await database.photoMetadata.upsert(updatedMetadata);
-      }
+      // Detection job owns faceStatus; nothing for us to persist here.
       await onProgress(job.id, 1.0);
       return;
     }
@@ -294,12 +277,9 @@ class AIJobProcessor {
       logger.warning(
         'Face embedding generation failed for photo ${job.photoId}',
       );
-      if (photoMetadata != null) {
-        final updatedMetadata = photoMetadata.copyWith(
-          faceStatus: FaceStatus.failed,
-        );
-        await database.photoMetadata.upsert(updatedMetadata);
-      }
+      // Don't reset faceStatus to failed: detection already succeeded and
+      // faceStatus tracks detection. Embedding failure is logged; clustering
+      // will be retried on the next embedding job run.
       await onProgress(job.id, 1.0);
       return;
     }
@@ -323,12 +303,9 @@ class AIJobProcessor {
       }
     }
 
-    if (photoMetadata != null) {
-      final updatedMetadata = photoMetadata.copyWith(
-        faceStatus: FaceStatus.completed,
-      );
-      await database.photoMetadata.upsert(updatedMetadata);
-    }
+    // faceStatus/faceModelVersion are managed by the detection job. The
+    // successful embedding step only needs to persist the face records with
+    // embeddings (done above), used downstream by clustering.
 
     await onProgress(job.id, 1.0);
   }
@@ -562,13 +539,22 @@ class AIJobProcessor {
       final isBlurry = blurScore < 100.0;
 
       final colorCounts = <String, int>{};
-      for (var y = 0; y < decoded.height; y += decoded.height ~/ 10) {
-        for (var x = 0; x < decoded.width; x += decoded.width ~/ 10) {
-          final pixel = decoded.getPixel(x, y);
-          final colorKey =
-              '#${pixel.r.toInt().toRadixString(16).padLeft(2, '0')}${pixel.g.toInt().toRadixString(16).padLeft(2, '0')}${pixel.b.toInt().toRadixString(16).padLeft(2, '0')}';
-          colorCounts[colorKey] = (colorCounts[colorKey] ?? 0) + 1;
+      final colorStepY = decoded.height ~/ 10;
+      final colorStepX = decoded.width ~/ 10;
+      if (colorStepY > 0 && colorStepX > 0) {
+        for (var y = 0; y < decoded.height; y += colorStepY) {
+          for (var x = 0; x < decoded.width; x += colorStepX) {
+            final pixel = decoded.getPixel(x, y);
+            final colorKey =
+                '#${pixel.r.toInt().toRadixString(16).padLeft(2, '0')}${pixel.g.toInt().toRadixString(16).padLeft(2, '0')}${pixel.b.toInt().toRadixString(16).padLeft(2, '0')}';
+            colorCounts[colorKey] = (colorCounts[colorKey] ?? 0) + 1;
+          }
         }
+      } else if (decoded.height > 0 && decoded.width > 0) {
+        final pixel = decoded.getPixel(0, 0);
+        final colorKey =
+            '#${pixel.r.toInt().toRadixString(16).padLeft(2, '0')}${pixel.g.toInt().toRadixString(16).padLeft(2, '0')}${pixel.b.toInt().toRadixString(16).padLeft(2, '0')}';
+        colorCounts[colorKey] = 1;
       }
 
       return ImageAnalysis(

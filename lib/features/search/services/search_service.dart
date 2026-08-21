@@ -189,19 +189,37 @@ class SearchService {
 
     // Get OCR text matches for the query
     final ocrRecords = await database.ocrResults.searchOcrText(query);
-    // Build a map of photoId to highest OCR confidence for this query
-    final Map<String, double> ocrConfidenceMap = {};
+    // Build a map of photoId to text-match relevance score.
+    // We combine the OCR recognition confidence (how reliable the text is)
+    // with the query-relevance (how much of the query actually appears in
+    // the OCR text), so a high-confidence OCR of unrelated text does not
+    // unfairly outrank a lower-confidence but on-topic match.
+    final Map<String, double> ocrTextScoreMap = {};
+    final queryTokens = query
+        .toLowerCase()
+        .split(RegExp(r'\s+'))
+        .where((t) => t.isNotEmpty)
+        .toList();
     for (final record in ocrRecords) {
-      final current = ocrConfidenceMap[record.photoId];
-      if (current == null || record.confidence > current) {
-        ocrConfidenceMap[record.photoId] = record.confidence;
+      final textLower = record.text.toLowerCase();
+      double relevance;
+      if (queryTokens.isEmpty) {
+        relevance = textLower.contains(query.toLowerCase()) ? 1.0 : 0.0;
+      } else {
+        final matched = queryTokens.where(textLower.contains).length;
+        relevance = matched / queryTokens.length;
+      }
+      final score = relevance * record.confidence.clamp(0.0, 1.0);
+      final current = ocrTextScoreMap[record.photoId];
+      if (current == null || score > current) {
+        ocrTextScoreMap[record.photoId] = score;
       }
     }
 
     // Combine candidate photoIds from semantic search and OCR text matches
     final Set<String> allCandidateIds = <String>{};
     allCandidateIds.addAll(semanticScores.keys);
-    allCandidateIds.addAll(ocrConfidenceMap.keys);
+    allCandidateIds.addAll(ocrTextScoreMap.keys);
 
     // Weights for combining scores (can be tuned)
     const double semanticWeight = 0.7;
@@ -230,7 +248,7 @@ class SearchService {
       // Get semantic score (default 0.0 if not in semantic candidates)
       final semanticScore = semanticScores[photoId] ?? 0.0;
       // Get OCR text match score (default 0.0 if no OCR match for this photo)
-      final textMatchScore = ocrConfidenceMap[photoId] ?? 0.0;
+      final textMatchScore = ocrTextScoreMap[photoId] ?? 0.0;
 
       // Combine scores
       final double combinedScore =

@@ -146,7 +146,7 @@ void main() {
       }
 
       // Verify related pairs have higher similarity than unrelated
-      for (final (concept, query) in testCases) {
+      for (final (concept, _) in testCases) {
         final relatedSim = _cosineSimilarity(conceptEmbeddings[concept]!, queryEmbeddings[concept]!);
 
         // Find max similarity with unrelated concepts

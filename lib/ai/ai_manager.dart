@@ -1,5 +1,3 @@
-import 'dart:typed_data';
-
 import '../ai/ai_job_processor.dart';
 import '../ai/providers/embedding_provider.dart';
 import '../ai/providers/object_detection_provider.dart';

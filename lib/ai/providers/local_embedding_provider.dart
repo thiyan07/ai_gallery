@@ -155,7 +155,7 @@ class LocalEmbeddingProvider implements EmbeddingProvider {
         // Try to load from bundled assets if available
         if (isHighEndTier && _modelAssetPath != null && _textModelAssetPath != null) {
           _logger.info('Loading ONNX vision model from assets: $_modelAssetPath');
-          visionModelBytes = await _loadModelFromAssets(_modelAssetPath!);
+          visionModelBytes = await _loadModelFromAssets(_modelAssetPath);
         } else if (!isHighEndTier) {
           // For low/medium tiers: check if we have a tier-appropriate bundled model
           // For now, we return a clear error to show the "model not ready" UI
@@ -206,7 +206,7 @@ class LocalEmbeddingProvider implements EmbeddingProvider {
             textModelBytes = null;
           } else if (_textModelAssetPath != null) {
             _logger.info('Loading ONNX text encoder from assets: $_textModelAssetPath');
-            textModelBytes = await _loadModelFromAssets(_textModelAssetPath!);
+            textModelBytes = await _loadModelFromAssets(_textModelAssetPath);
           }
         }
       } catch (e) {
@@ -311,7 +311,7 @@ class LocalEmbeddingProvider implements EmbeddingProvider {
 
     try {
       // Load tokenizer model from assets
-      final modelBytes = await rootBundle.load(_tokenizerAssetPath!);
+      final modelBytes = await rootBundle.load(_tokenizerAssetPath);
       _tokenizer = SentencePieceTokenizer.fromBytes(
         modelBytes.buffer.asUint8List(),
         config: SentencePieceConfig(
@@ -321,7 +321,7 @@ class LocalEmbeddingProvider implements EmbeddingProvider {
       );
       _vocabSize = _tokenizer!.vocabSize;
       _logger.info('SentencePiece tokenizer loaded (vocab size: $_vocabSize)');
-    } catch (e, st) {
+    } catch (e) {
       _logger.warning('Failed to load SentencePiece tokenizer, text search disabled: $e');
       _tokenizer = null;
       _vocabSize = 0;

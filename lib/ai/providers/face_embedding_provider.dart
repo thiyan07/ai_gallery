@@ -11,7 +11,6 @@ import '../../core/logging/app_logger.dart';
 import '../../core/services/model_downloader.dart';
 import '../../core/services/model_manager.dart';
 import '../../core/utils/device_capabilities.dart';
-import '../../domain/models/embedding.dart';
 import '../../domain/models/face_detection.dart';
 import 'embedding_provider.dart';
 
@@ -346,7 +345,6 @@ class FaceEmbeddingProvider implements EmbeddingProvider {
     // Standard: eyes at (38, 48) and (74, 48) for 112x112 output
     const desiredRightEyeX = 38.0;
     const desiredLeftEyeX = 74.0;
-    const desiredEyeY = 48.0;
     const desiredDist = desiredLeftEyeX - desiredRightEyeX; // 36
 
     // Current eye distance

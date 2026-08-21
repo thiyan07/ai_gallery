@@ -231,8 +231,8 @@ class _GalleryTabState extends ConsumerState<_GalleryTab>
                         icon: const Icon(Icons.refresh),
                         label: const Text('Try Again'),
                         onPressed: () {
-                          ref.refresh(albumListProvider);
-                          ref.refresh(mediaPermissionProvider);
+                          ref.invalidate(albumListProvider);
+                          ref.invalidate(mediaPermissionProvider);
                         },
                       ),
                     ],
