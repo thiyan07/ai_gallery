@@ -55,6 +55,8 @@ dependencies:
   video_player: ^2.14.0
   wakelock_plus: ^1.2.8
   camera: ^0.12.1
+  wallpaper_manager_flutter: ^1.0.1
+  printing: ^5.15.1
 
 dev_dependencies:
   flutter_test:

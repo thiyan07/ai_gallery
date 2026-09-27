@@ -1,8 +1,14 @@
+import 'dart:async';
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:photo_manager/photo_manager.dart';
 import 'package:photo_manager_image_provider/photo_manager_image_provider.dart';
+import 'package:printing/printing.dart';
+import 'package:pdf/widgets.dart' as pw;
 import 'package:share_plus/share_plus.dart';
+import 'package:wallpaper_manager_flutter/wallpaper_manager_flutter.dart';
 import 'package:ai_gallery/features/search/providers/search_providers.dart';
 import '../../../core/di/providers.dart' as di_providers;
 import '../providers/favorites_provider.dart';
@@ -29,6 +35,14 @@ class _PhotoViewScreenState extends ConsumerState<PhotoViewScreen> {
   late PageController _pageController;
   late int _currentIndex;
   bool _showBars = true;
+  bool _slideshow = false;
+  bool _slideshowRepeat = true;
+  bool _slideshowShuffle = false;
+  Timer? _slideshowTimer;
+  final _random = math.Random();
+
+  /// Seconds each photo stays on screen during a slideshow.
+  static const _slideDuration = Duration(seconds: 4);
 
   @override
   void initState() {
@@ -43,11 +57,58 @@ class _PhotoViewScreenState extends ConsumerState<PhotoViewScreen> {
 
   @override
   void dispose() {
+    _slideshowTimer?.cancel();
     _pageController.dispose();
     super.dispose();
   }
 
   AssetEntity get _current => widget.assets[_currentIndex];
+
+  /// Toggle automatic slideshow playback (4s per photo).
+  void _toggleSlideshow() {
+    if (_slideshow) {
+      _slideshowTimer?.cancel();
+      setState(() {
+        _slideshow = false;
+        _showBars = true;
+      });
+      return;
+    }
+    if (widget.assets.length < 2) return;
+    setState(() {
+      _slideshow = true;
+      _showBars = false;
+    });
+    _slideshowTimer = Timer.periodic(_slideDuration, (_) {
+      if (!mounted) return;
+      var next = _currentIndex + 1;
+      if (_slideshowShuffle && widget.assets.length > 1) {
+        // Random next photo, never the same one twice in a row.
+        do {
+          next = _random.nextInt(widget.assets.length);
+        } while (next == _currentIndex);
+      } else if (next >= widget.assets.length) {
+        if (_slideshowRepeat) {
+          next = 0;
+          _pageController.jumpToPage(0);
+          setState(() => _currentIndex = 0);
+          _precacheNeighbors(0);
+          return;
+        }
+        _toggleSlideshow();
+        return;
+      }
+      _pageController.nextPage(
+        duration: const Duration(milliseconds: 600),
+        curve: Curves.easeInOut,
+      );
+      if (_slideshowShuffle) {
+        _pageController.jumpToPage(next);
+        setState(() => _currentIndex = next);
+        _precacheNeighbors(next);
+      }
+    });
+  }
 
   /// Pre-decode the previous/next full photos so swiping never waits on IO.
   void _precacheNeighbors(int index) {
@@ -83,55 +144,135 @@ class _PhotoViewScreenState extends ConsumerState<PhotoViewScreen> {
     );
   }
 
-  Future<void> _confirmDelete(BuildContext context) async {
-    final confirmed = await showDialog<bool>(
+  /// Set the current photo as device wallpaper (home / lock / both).
+  Future<void> _setAsWallpaper(BuildContext context) async {
+    if (_current.type == AssetType.video) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Wallpaper works with photos only')),
+      );
+      return;
+    }
+    final location = await showDialog<int>(
+      context: context,
+      builder: (ctx) => SimpleDialog(
+        title: const Text('Set as wallpaper'),
+        children: [
+          SimpleDialogOption(
+            onPressed: () =>
+                Navigator.pop(ctx, WallpaperManagerFlutter.homeScreen),
+            child: const ListTile(
+              leading: Icon(Icons.home_outlined),
+              title: Text('Home screen'),
+            ),
+          ),
+          SimpleDialogOption(
+            onPressed: () =>
+                Navigator.pop(ctx, WallpaperManagerFlutter.lockScreen),
+            child: const ListTile(
+              leading: Icon(Icons.lock_outline),
+              title: Text('Lock screen'),
+            ),
+          ),
+          SimpleDialogOption(
+            onPressed: () =>
+                Navigator.pop(ctx, WallpaperManagerFlutter.bothScreens),
+            child: const ListTile(
+              leading: Icon(Icons.phone_android_outlined),
+              title: Text('Both screens'),
+            ),
+          ),
+        ],
+      ),
+    );
+    if (location == null || !context.mounted) return;
+    try {
+      final file = await _current.file;
+      if (file == null) throw StateError('Could not read photo file');
+      final ok =
+          await WallpaperManagerFlutter().setWallpaper(file, location);
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(ok ? 'Wallpaper set' : 'Could not set wallpaper'),
+        ),
+      );
+    } catch (e) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not set wallpaper: $e')),
+      );
+    }
+  }
+
+    /// Print the current photo via the system print dialog.
+  Future<void> _printPhoto(BuildContext context) async {
+    if (_current.type == AssetType.video) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Printing works with photos only')),
+      );
+      return;
+    }
+    try {
+      final bytes = await _current.originBytes;
+      if (bytes == null) throw StateError('Could not read photo data');
+      final doc = pw.Document();
+      final image = pw.MemoryImage(bytes);
+      doc.addPage(
+        pw.Page(
+          build: (ctx) => pw.Center(child: pw.Image(image)),
+        ),
+      );
+      await Printing.layoutPdf(
+        onLayout: (_) async => doc.save(),
+        name: _current.title ?? 'photo.pdf',
+      );
+    } catch (e) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not print: $e')),
+      );
+    }
+  }
+
+  Future<void> _confirmDelete(BuildContext context) async {    final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('Delete photo?'),
-        content: const Text(
-          'This will permanently delete the photo from your device. This action cannot be undone.',
-        ),
+        title: const Text('Move to trash?'),
+        content: const Text('The photo stays recoverable in trash for 30 days.'),
         actions: [
           TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
           FilledButton(
             style: FilledButton.styleFrom(backgroundColor: Theme.of(ctx).colorScheme.error),
             onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('Delete'),
+            child: const Text('Move to trash'),
           ),
         ],
       ),
     );
     if (confirmed != true) return;
-    final deleted = await MediaService.deleteAssets([_current.id]);
-    if (deleted > 0) {
-      try {
-        final db = await ref.read(di_providers.appDatabaseProvider.future);
-        await db.database.delete('photo_metadata', where: 'photo_id = ?', whereArgs: [_current.id]);
-        await db.database.delete('embeddings', where: 'photo_id = ?', whereArgs: [_current.id]);
-        await db.database.delete('faces', where: 'photo_id = ?', whereArgs: [_current.id]);
-        await db.database.delete('object_tags', where: 'photo_id = ?', whereArgs: [_current.id]);
-        await db.database.delete('ocr_text', where: 'photo_id = ?', whereArgs: [_current.id]);
-        await db.database.delete('favorites', where: 'asset_id = ?', whereArgs: [_current.id]);
-        await db.database.delete('edit_recipes', where: 'photo_id = ?', whereArgs: [_current.id]);
-        await db.database.delete('analysis_state', where: 'photo_id = ?', whereArgs: [_current.id]);
-      } catch (_) {}
-      ref.invalidate(photoListProvider);
-      ref.invalidate(albumListProvider);
-    }
+    final trash = ref.read(trashServiceProvider);
+    await trash.moveToTrash([_current.id],
+        mediaType: _current.type == AssetType.video ? 'video' : 'image');
+    ref.invalidate(photoListProvider);
+    ref.invalidate(albumListProvider);
     if (!context.mounted) return;
-    if (deleted > 0) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Photo deleted')),
-      );
-      if (widget.assets.length <= 1) {
-        Navigator.of(context).pop();
-      } else {
-        if (mounted) Navigator.of(context).pop();
-      }
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: const Text('Moved to trash (30 days to restore)'),
+        action: SnackBarAction(
+          label: 'Undo',
+          onPressed: () async {
+            await trash.restore([_current.id]);
+            ref.invalidate(photoListProvider);
+            ref.invalidate(albumListProvider);
+          },
+        ),
+      ),
+    );
+    if (widget.assets.length <= 1) {
+      Navigator.of(context).pop();
     } else {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Failed to delete photo')),
-      );
+      if (mounted) Navigator.of(context).pop();
     }
   }
 
@@ -153,6 +294,14 @@ class _PhotoViewScreenState extends ConsumerState<PhotoViewScreen> {
                 style: const TextStyle(fontSize: 15),
               ),
               actions: [
+                IconButton(
+                  icon: Icon(
+                    _slideshow ? Icons.pause : Icons.slideshow_outlined,
+                    color: Colors.white,
+                  ),
+                  tooltip: _slideshow ? 'Stop slideshow' : 'Slideshow',
+                  onPressed: _toggleSlideshow,
+                ),
                 IconButton(
                   icon: Icon(
                     isFav ? Icons.star : Icons.star_border,
@@ -180,19 +329,61 @@ class _PhotoViewScreenState extends ConsumerState<PhotoViewScreen> {
                   tooltip: 'Delete',
                   onPressed: () => _confirmDelete(context),
                 ),
-                IconButton(
-                  icon: const Icon(Icons.info_outline, color: Colors.white),
-                  onPressed: () => _showDetails(context),
+                PopupMenuButton<String>(
+                  icon: const Icon(Icons.more_vert, color: Colors.white),
+                  tooltip: 'More',
+                  onSelected: (value) {
+                    switch (value) {
+                      case 'wallpaper':
+                        _setAsWallpaper(context);
+                      case 'print':
+                        _printPhoto(context);
+                      case 'details':
+                        _showDetails(context);
+                    }
+                  },
+                  itemBuilder: (context) => [
+                    if (_current.type != AssetType.video)
+                      const PopupMenuItem(
+                        value: 'wallpaper',
+                        child: ListTile(
+                          leading: Icon(Icons.wallpaper_outlined),
+                          title: Text('Set as wallpaper'),
+                          contentPadding: EdgeInsets.zero,
+                        ),
+                      ),
+                    if (_current.type != AssetType.video)
+                      const PopupMenuItem(
+                        value: 'print',
+                        child: ListTile(
+                          leading: Icon(Icons.print_outlined),
+                          title: Text('Print'),
+                          contentPadding: EdgeInsets.zero,
+                        ),
+                      ),
+                    const PopupMenuItem(
+                      value: 'details',
+                      child: ListTile(
+                        leading: Icon(Icons.info_outline),
+                        title: Text('Details'),
+                        contentPadding: EdgeInsets.zero,
+                      ),
+                    ),
+                  ],
                 ),
               ],
             )
           : null,
-      body: GestureDetector(
-        onTap: _toggleBars,
-        child: PageView.builder(
+      body: Stack(
+        children: [
+          GestureDetector(
+            onTap: _toggleBars,
+            child: PageView.builder(
           controller: _pageController,
           itemCount: widget.assets.length,
           onPageChanged: (i) {
+            // Manual swipes end the slideshow.
+            if (_slideshow) _toggleSlideshow();
             setState(() => _currentIndex = i);
             _precacheNeighbors(i);
           },
@@ -233,6 +424,68 @@ class _PhotoViewScreenState extends ConsumerState<PhotoViewScreen> {
             );
           },
         ),
+          ),
+          // Slideshow controls (visible while playing).
+          if (_slideshow)
+            Positioned(
+              bottom: 32,
+              left: 0,
+              right: 0,
+              child: Center(
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 4,
+                  ),
+                  decoration: BoxDecoration(
+                    color: Colors.black.withValues(alpha: 0.7),
+                    borderRadius: BorderRadius.circular(24),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      IconButton(
+                        icon: Icon(
+                          _slideshowShuffle
+                              ? Icons.shuffle_on_outlined
+                              : Icons.shuffle_outlined,
+                          color: _slideshowShuffle
+                              ? Theme.of(context).colorScheme.primary
+                              : Colors.white,
+                        ),
+                        tooltip: 'Shuffle',
+                        onPressed: () => setState(
+                          () => _slideshowShuffle = !_slideshowShuffle,
+                        ),
+                      ),
+                      IconButton(
+                        icon: Icon(
+                          _slideshowRepeat
+                              ? Icons.repeat_on_outlined
+                              : Icons.repeat_outlined,
+                          color: _slideshowRepeat
+                              ? Theme.of(context).colorScheme.primary
+                              : Colors.white,
+                        ),
+                        tooltip: 'Repeat',
+                        onPressed: () => setState(
+                          () => _slideshowRepeat = !_slideshowRepeat,
+                        ),
+                      ),
+                      IconButton(
+                        icon: const Icon(
+                          Icons.stop_outlined,
+                          color: Colors.white,
+                        ),
+                        tooltip: 'Stop',
+                        onPressed: _toggleSlideshow,
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+        ],
       ),
     );
   }

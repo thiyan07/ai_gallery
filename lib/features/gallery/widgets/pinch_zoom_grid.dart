@@ -46,6 +46,11 @@ class _PinchZoomGridState extends ConsumerState<PinchZoomGrid>
   double _currentPinchScale = 1.0;
   bool _isPinching = false;
 
+  // Timeline scrubber state (Immich/AOSP-style fast scroll with date bubble).
+  bool _scrubbing = false;
+  String _scrubLabel = '';
+  double _lastRowHeight = 0;
+
   @override
   void initState() {
     super.initState();
@@ -170,6 +175,59 @@ class _PinchZoomGridState extends ConsumerState<PinchZoomGrid>
     _overlayAnimationController.reverse();
   }
 
+  /// Height of one grid row in logical pixels (square tiles + spacing).
+  double _rowHeight(BuildContext context, int columns) {
+    const spacing = 2.0;
+    const padding = 2.0;
+    final width = MediaQuery.sizeOf(context).width - padding * 2;
+    return (width - spacing * (columns - 1)) / columns + spacing;
+  }
+
+  /// Date label for the item at [index] (clamped into the photo list).
+  String _dateLabelFor(int index) {
+    final photos = widget.photoList;
+    if (photos.isEmpty) return '';
+    final clamped = index.clamp(0, photos.length - 1);
+    final date = photos[clamped].createDateTime;
+    const months = [
+      '', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+    ];
+    final now = DateTime.now();
+    final label = '${months[date.month]} ${date.day}';
+    return date.year == now.year ? label : '$label ${date.year}';
+  }
+
+  /// First-visible item index for a scroll [offset].
+  int _indexForOffset(double offset, double rowHeight, int columns) {
+    if (rowHeight <= 0) return 0;
+    return (offset / rowHeight).floor() * columns;
+  }
+
+  void _onScrubStart(double localY, double stripHeight) {
+    _onScrubUpdate(localY, stripHeight);
+    setState(() => _scrubbing = true);
+  }
+
+  void _onScrubUpdate(double localY, double stripHeight) {
+    final controller = widget.scrollController;
+    if (!controller.hasClients || stripHeight <= 0) return;
+    final max = controller.position.maxScrollExtent;
+    if (max <= 0) return;
+    final fraction = (localY / stripHeight).clamp(0.0, 1.0);
+    final offset = fraction * max;
+    controller.jumpTo(offset);
+    final columns = _gridSizes[_currentGridSizeIndex];
+    setState(() {
+      _scrubLabel =
+          _dateLabelFor(_indexForOffset(offset, _lastRowHeight, columns));
+    });
+  }
+
+  void _onScrubEnd() {
+    setState(() => _scrubbing = false);
+  }
+
   @override
   Widget build(BuildContext context) {
     final photoList = widget.photoList;
@@ -177,6 +235,7 @@ class _PinchZoomGridState extends ConsumerState<PinchZoomGrid>
     // Decode thumbnails at the actual tile size × DPR instead of a fixed
     // 300px — at 5-6 columns this cuts per-tile decode work dramatically.
     final thumbnailSize = ThumbnailSizes.forGrid(context, currentGridSize);
+    _lastRowHeight = _rowHeight(context, currentGridSize);
 
     return GestureDetector(
       onScaleStart: _handleScaleStart,
@@ -305,6 +364,73 @@ class _PinchZoomGridState extends ConsumerState<PinchZoomGrid>
               );
             },
           ),
+          // Timeline scrubber: right-edge drag strip with date bubble.
+          if (photoList.length > 20)
+            Positioned(
+              right: 0,
+              top: 0,
+              bottom: 0,
+              width: 28,
+              child: LayoutBuilder(
+                builder: (context, constraints) {
+                  final stripHeight = constraints.maxHeight;
+                  return GestureDetector(
+                    behavior: HitTestBehavior.translucent,
+                    onVerticalDragStart: (d) => _onScrubStart(
+                      d.localPosition.dy,
+                      stripHeight,
+                    ),
+                    onVerticalDragUpdate: (d) => _onScrubUpdate(
+                      d.localPosition.dy,
+                      stripHeight,
+                    ),
+                    onVerticalDragEnd: (_) => _onScrubEnd(),
+                    onVerticalDragCancel: _onScrubEnd,
+                    child: Center(
+                      child: Container(
+                        width: 4,
+                        height: 72,
+                        decoration: BoxDecoration(
+                          color: Theme.of(context)
+                              .colorScheme
+                              .onSurfaceVariant
+                              .withValues(alpha: _scrubbing ? 0.9 : 0.4),
+                          borderRadius: BorderRadius.circular(2),
+                        ),
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ),
+          if (_scrubbing && _scrubLabel.isNotEmpty)
+            Positioned(
+              right: 36,
+              top: 0,
+              bottom: 0,
+              child: Center(
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 10,
+                  ),
+                  decoration: BoxDecoration(
+                    color:
+                        Theme.of(context).colorScheme.inverseSurface,
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Text(
+                    _scrubLabel,
+                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                          color: Theme.of(context)
+                              .colorScheme
+                              .onInverseSurface,
+                          fontWeight: FontWeight.bold,
+                        ),
+                  ),
+                ),
+              ),
+            ),
         ],
       ),
     );
