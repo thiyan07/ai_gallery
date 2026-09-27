@@ -74,6 +74,10 @@ class GoogleVisionProvider implements EmbeddingProvider, ObjectDetectionProvider
 
   @override
   Future<Float32List> generateEmbedding(Uint8List imageBytes) async {
+    _logger.warning(
+      'PRIVACY: Image data being sent to Google Vision cloud API. '
+      'Ensure user consent has been obtained.',
+    );
     final apiKey = await _getApiKey();
     if (apiKey == null || apiKey.isEmpty) {
       throw StateError('Google Vision API key not configured');
@@ -374,8 +378,11 @@ class GoogleVisionProvider implements EmbeddingProvider, ObjectDetectionProvider
     String apiKey,
   ) async {
     final response = await http.post(
-      Uri.parse('$_baseUrl?key=$apiKey'),
-      headers: {'Content-Type': 'application/json'},
+      Uri.parse('$_baseUrl'),
+      headers: {
+        'Content-Type': 'application/json',
+        'X-goog-api-key': apiKey,
+      },
       body: jsonEncode(requestBody),
     );
 

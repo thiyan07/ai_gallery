@@ -75,6 +75,10 @@ class AnthropicEmbeddingProvider implements EmbeddingProvider {
 
   @override
   Future<Float32List> generateEmbedding(Uint8List imageBytes) async {
+    _logger.warning(
+      'PRIVACY: Image data being sent to Anthropic cloud API for embedding generation. '
+      'Ensure user consent has been obtained.',
+    );
     final apiKey = await _getApiKey();
     if (apiKey == null || apiKey.isEmpty) {
       throw StateError('Anthropic API key not configured');

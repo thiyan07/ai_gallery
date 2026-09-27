@@ -10,6 +10,7 @@ import 'package:onnxruntime/onnxruntime.dart';
 import '../../core/logging/app_logger.dart';
 import '../../core/services/model_downloader.dart';
 import '../../core/services/model_manager.dart';
+import '../../core/utils/async_init_guard.dart';
 import '../../core/utils/device_capabilities.dart';
 import '../../domain/models/object_detection_model.dart';
 import 'object_detection_provider.dart';
@@ -64,6 +65,7 @@ class LocalObjectDetectionProvider implements ObjectDetectionProvider {
   DeviceCapabilities? _capabilities;
   String? _resolvedPreset;
   int? _resolvedInputSize;
+  final _initGuard = AsyncInitGuard();
 
   // COCO class labels (80 classes)
   static const _cocoLabels = [
@@ -103,6 +105,11 @@ class LocalObjectDetectionProvider implements ObjectDetectionProvider {
 
   /// Initialize the ONNX Runtime session with auto-selected YOLO model.
   Future<void> _ensureInitialized() async {
+    if (_initialized) return;
+    await _initGuard.run(_doInitialize);
+  }
+
+  Future<void> _doInitialize() async {
     if (_initialized) return;
 
     try {
@@ -206,12 +213,19 @@ class LocalObjectDetectionProvider implements ObjectDetectionProvider {
     }
   }
 
+  void resetForRetry() {
+    _session?.release();
+    _session = null;
+    _initialized = false;
+    _initGuard.reset();
+  }
+
   @override
   Future<ObjectDetectionResult> detectObjects(Uint8List imageBytes) async {
     await _ensureInitialized();
 
     if (_session == null) {
-      throw StateError('ONNX session not initialized');
+      throw StateError('MODEL_NOT_READY: Object detection session not initialized — please download YOLO model from Settings > AI Models');
     }
 
     final stopwatch = Stopwatch()..start();
@@ -461,5 +475,6 @@ class LocalObjectDetectionProvider implements ObjectDetectionProvider {
     _session?.release();
     _session = null;
     _initialized = false;
+    _initGuard.reset();
   }
 }

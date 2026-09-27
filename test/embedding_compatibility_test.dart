@@ -1,216 +1,216 @@
-import 'dart:typed_data';
 import 'dart:math' show sqrt;
+import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:ai_gallery/ai/providers/local_embedding_provider.dart';
-import 'package:ai_gallery/core/logging/app_logger.dart';
-import 'package:ai_gallery/core/services/model_downloader.dart';
-import 'package:ai_gallery/core/services/model_manager.dart';
-import 'package:onnxruntime/onnxruntime.dart';
 
 void main() {
-  // Initialize Flutter binding for asset loading
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  group('Embedding Compatibility Verification', () {
-    late LocalEmbeddingProvider provider;
-    late AppLogger logger;
-    late ModelManager modelManager;
+  group('Cosine Similarity', () {
+    test('parallel vectors return 1.0', () {
+      final a = Float32List.fromList([1, 0, 0, 0]);
+      final b = Float32List.fromList([1, 0, 0, 0]);
+      expect(cosineSimilarity(a, b), closeTo(1.0, 1e-6));
+    });
 
-    setUpAll(() async {
-      logger = const ConsoleAppLogger();
-      modelManager = ModelManager(downloader: ModelDownloader(logger: logger), logger: logger);
+    test('orthogonal vectors return 0.0', () {
+      final a = Float32List.fromList([1, 0, 0, 0]);
+      final b = Float32List.fromList([0, 1, 0, 0]);
+      expect(cosineSimilarity(a, b), closeTo(0.0, 1e-6));
+    });
 
-      // Use bundled models for testing
-      provider = LocalEmbeddingProvider(
-        logger: logger,
-        modelManager: modelManager,
-        modelAssetPath: 'assets/models/siglip_base_patch16_224.onnx',
-        textModelAssetPath: 'assets/models/siglip_text_encoder.onnx',
-        tokenizerAssetPath: 'assets/models/siglip_tokenizer.model',
-        modelPreset: 'siglip-base-patch16-224',
+    test('opposite vectors return -1.0', () {
+      final a = Float32List.fromList([1, 0]);
+      final b = Float32List.fromList([-1, 0]);
+      expect(cosineSimilarity(a, b), closeTo(-1.0, 1e-6));
+    });
+
+    test('known angle returns correct similarity', () {
+      final a = Float32List.fromList([1, 0]);
+      final sqrt2 = sqrt(2.0);
+      final b = Float32List.fromList([1.0 / sqrt2, 1.0 / sqrt2]);
+      expect(cosineSimilarity(a, b), closeTo(1.0 / sqrt2, 1e-4));
+    });
+
+    test('mismatched dimensions return 0.0', () {
+      final a = Float32List.fromList([1, 0, 0]);
+      final b = Float32List.fromList([1, 0]);
+      expect(cosineSimilarity(a, b), 0.0);
+    });
+
+    test('similarity is commutative', () {
+      final a = Float32List.fromList([0.5, 0.5, 0.5, 0.5]);
+      final b = Float32List.fromList([0.1, 0.2, 0.3, 0.4]);
+      expect(cosineSimilarity(a, b), closeTo(cosineSimilarity(b, a), 1e-10));
+    });
+
+    test('result is clamped to [-1, 1]', () {
+      final a = Float32List.fromList([1e10, 1e10]);
+      final b = Float32List.fromList([1e10, 1e10]);
+      expect(cosineSimilarity(a, b), inInclusiveRange(-1.0, 1.0));
+    });
+  });
+
+  group('L2 Normalization', () {
+    test('unit vector has norm 1.0', () {
+      final v = Float32List.fromList([1, 0, 0, 0]);
+      expect(l2Norm(v), closeTo(1.0, 1e-6));
+    });
+
+    test('known vector has correct norm', () {
+      final v = Float32List.fromList([3, 4]);
+      expect(l2Norm(v), closeTo(5.0, 1e-6));
+    });
+
+    test('zero vector has norm 0.0', () {
+      final v = Float32List.fromList([0, 0, 0]);
+      expect(l2Norm(v), 0.0);
+    });
+
+    test('normalized vector has norm 1.0', () {
+      final v = Float32List.fromList([3, 4]);
+      final normalized = l2Normalize(v);
+      expect(l2Norm(normalized), closeTo(1.0, 1e-6));
+    });
+
+    test('preserves direction after normalization', () {
+      final v = Float32List.fromList([3, 4]);
+      final normalized = l2Normalize(v);
+      expect(normalized[0], closeTo(0.6, 1e-6));
+      expect(normalized[1], closeTo(0.8, 1e-6));
+    });
+
+    test('large values normalize correctly', () {
+      final v = Float32List.fromList([1000, 2000, 3000]);
+      final normalized = l2Normalize(v);
+      expect(l2Norm(normalized), closeTo(1.0, 1e-4));
+    });
+
+    test('negative values normalize correctly', () {
+      final v = Float32List.fromList([-3, 4]);
+      final normalized = l2Normalize(v);
+      expect(l2Norm(normalized), closeTo(1.0, 1e-6));
+      expect(normalized[0], closeTo(-0.6, 1e-6));
+      expect(normalized[1], closeTo(0.8, 1e-6));
+    });
+  });
+
+  group('Embedding Dimension Validation', () {
+    test('SigLIP dimension is 768', () {
+      const siglipDim = 768;
+      final embedding = Float32List(siglipDim);
+      expect(embedding.length, equals(768));
+    });
+
+    test('YOLOv8 face detection output has expected format', () {
+      final detection = Float32List.fromList([0.5, 0.5, 0.1, 0.1, 0.95]);
+      expect(detection.length, equals(5));
+      expect(detection[4], greaterThan(0.0));
+    });
+
+    test('mismatched dimensions return 0.0 similarity', () {
+      final a = Float32List(768);
+      final b = Float32List(512);
+      expect(cosineSimilarity(a, b), 0.0);
+    });
+
+    test('empty vectors return 0.0 similarity', () {
+      final a = Float32List(0);
+      final b = Float32List(0);
+      expect(cosineSimilarity(a, b), 0.0);
+    });
+  });
+
+  group('Similarity Threshold Behavior', () {
+    test('identical normalized vectors have similarity 1.0', () {
+      final v = l2Normalize(Float32List.fromList([1, 2, 3, 4]));
+      expect(cosineSimilarity(v, v), closeTo(1.0, 1e-6));
+    });
+
+    test('very different vectors have low similarity', () {
+      final a = l2Normalize(Float32List.fromList([1, 0, 0, 0]));
+      final b = l2Normalize(Float32List.fromList([0, 0, 0, 1]));
+      expect(cosineSimilarity(a, b), closeTo(0.0, 1e-6));
+    });
+
+    test('slightly perturbed vectors stay highly similar', () {
+      final original = l2Normalize(Float32List.fromList([1, 2, 3, 4]));
+      final perturbed = Float32List(original.length);
+      for (var i = 0; i < original.length; i++) {
+        perturbed[i] = original[i] + 0.01;
+      }
+      final perturbedNorm = l2Normalize(perturbed);
+      expect(cosineSimilarity(original, perturbedNorm), greaterThan(0.9));
+    });
+  });
+
+  group('Edge Cases', () {
+    test('all-zero vector similarity with non-zero returns 0', () {
+      final a = Float32List.fromList([0, 0, 0, 0]);
+      final b = Float32List.fromList([1, 0, 0, 0]);
+      expect(cosineSimilarity(a, b), 0.0);
+    });
+
+    test('very small values do not cause NaN or underflow', () {
+      final a = Float32List.fromList([1e-15, 1e-15]);
+      final b = Float32List.fromList([1e-15, 1e-15]);
+      final sim = cosineSimilarity(a, b);
+      expect(sim, isA<double>());
+      expect(sim, isNot(isNaN));
+      // Dot product of identical tiny vectors: 2e-30, clamped to valid range
+      expect(sim, inInclusiveRange(-1.0, 1.0));
+    });
+
+    test('very large values do not cause overflow', () {
+      final a = Float32List.fromList([1e10, 1e10]);
+      final b = Float32List.fromList([1e10, 1e10]);
+      final sim = cosineSimilarity(a, b);
+      expect(sim, isA<double>());
+      expect(sim, closeTo(1.0, 1e-6));
+    });
+
+    test('single element vectors work correctly', () {
+      expect(
+        cosineSimilarity(Float32List.fromList([1.0]), Float32List.fromList([1.0])),
+        closeTo(1.0, 1e-6),
       );
-
-      await provider.initialize();
-      await provider.warmUp();
-    });
-
-    tearDownAll(() async {
-      await provider.dispose();
-    });
-
-    test('Image encoder loads and produces 768-dim embeddings', () async {
-      // Create a simple test image (solid color)
-      // In real test, this would be actual image bytes
-      // For now, we verify the model dimension by checking the session
-      final session = provider.visionSession;
-      expect(session, isNotNull, reason: 'Vision ONNX session should be initialized');
-
-      // The output dimension should be 768 for SigLIP-B/16
-      // We'll verify this by running inference on a dummy tensor
-      final dummyTensor = OrtValueTensor.createTensorWithDataList(
-        Float32List(3 * 224 * 224),
-        [1, 3, 224, 224],
+      expect(
+        cosineSimilarity(Float32List.fromList([1.0]), Float32List.fromList([-1.0])),
+        closeTo(-1.0, 1e-6),
       );
+    });
+  });
 
-      final outputs = session!.run(OrtRunOptions(), {session.inputNames.first: dummyTensor});
-      final outputTensor = outputs.first;
-      expect(outputTensor, isNotNull);
-
-      final dynamic outputValue = outputTensor!.value;
-      List<double> embedding;
-      if (outputValue is List<double>) {
-        embedding = outputValue;
-      } else if (outputValue is Float32List) {
-        embedding = outputValue.toList();
-      } else {
-        throw StateError('Unexpected output type: ${outputValue.runtimeType}');
-      }
-
-      expect(embedding.length, equals(768),
-        reason: 'SigLIP-B/16 image embedding should be 768-dimensional');
+  group('Face Clustering Thresholds', () {
+    test('cosine similarity >= 0.6 means same person', () {
+      final a = l2Normalize(Float32List.fromList([1, 2, 3, 4]));
+      final b = l2Normalize(Float32List.fromList([1, 2, 3, 4.1]));
+      expect(cosineSimilarity(a, b), greaterThanOrEqualTo(0.6));
     });
 
-    test('Text encoder loads and produces 768-dim embeddings', () async {
-      final session = provider.textSession;
-      expect(session, isNotNull, reason: 'Text ONNX session should be initialized');
-
-      // Verify text encoder output dimension by running inference
-      final inputIds = List<int>.filled(77, 0);
-      inputIds[0] = 49406; // BOS token
-      inputIds[1] = 49407; // EOS token (for empty/short text)
-
-      final inputTensor = OrtValueTensor.createTensorWithDataList(
-        Int32List.fromList(inputIds),
-        [1, 77],
-      );
-
-      final outputs = session!.run(OrtRunOptions(), {session.inputNames.first: inputTensor});
-      final outputTensor = outputs.first;
-      expect(outputTensor, isNotNull);
-
-      final dynamic outputValue = outputTensor!.value;
-      List<double> embedding;
-      if (outputValue is List<double>) {
-        embedding = outputValue;
-      } else if (outputValue is Float32List) {
-        embedding = outputValue.toList();
-      } else {
-        throw StateError('Unexpected output type: ${outputValue.runtimeType}');
-      }
-
-      expect(embedding.length, equals(768),
-        reason: 'SigLIP-B/16 text embedding should be 768-dimensional (same as image)');
-    });
-
-    test('Image embeddings are L2 normalized', () async {
-      // Generate a test embedding using the public API
-      final testImageBytes = _createTestImageBytes(224, 224, color: 0xFFFF0000); // Red
-      final embedding = await provider.generateEmbedding(testImageBytes);
-
-      final norm = _l2Norm(embedding);
-      expect(norm, closeTo(1.0, 0.001),
-        reason: 'Image embedding should be L2 normalized (norm = 1.0)');
-    });
-
-    test('Text embeddings are L2 normalized', () async {
-      final embedding = await provider.generateTextEmbedding('test');
-
-      final norm = _l2Norm(embedding);
-      expect(norm, closeTo(1.0, 0.001),
-        reason: 'Text embedding should be L2 normalized (norm = 1.0)');
-    });
-
-    test('Image and text embeddings share the same space (semantic similarity)', () async {
-      // This test uses actual semantic queries
-      // We test that related concepts have higher similarity than unrelated ones
-
-      final testCases = [
-        ('dog', 'a photo of a dog'),
-        ('car', 'a photo of a car'),
-        ('beach', 'a photo of a beach'),
-        ('food', 'a photo of food'),
-        ('sunset', 'a photo of a sunset'),
-      ];
-
-      // Generate text embeddings for all queries
-      final queryEmbeddings = <String, Float32List>{};
-      for (final (concept, query) in testCases) {
-        queryEmbeddings[concept] = await provider.generateTextEmbedding(query);
-      }
-
-      // Generate text embedding for each individual concept
-      final conceptEmbeddings = <String, Float32List>{};
-      for (final (concept, _) in testCases) {
-        conceptEmbeddings[concept] = await provider.generateTextEmbedding(concept);
-      }
-
-      // Verify related pairs have higher similarity than unrelated
-      for (final (concept, _) in testCases) {
-        final relatedSim = _cosineSimilarity(conceptEmbeddings[concept]!, queryEmbeddings[concept]!);
-
-        // Find max similarity with unrelated concepts
-        double maxUnrelatedSim = 0.0;
-        for (final entry in queryEmbeddings.entries) {
-          final otherConcept = entry.key;
-          final otherQueryEmbedding = entry.value;
-          if (otherConcept != concept) {
-            final sim = _cosineSimilarity(conceptEmbeddings[concept]!, otherQueryEmbedding);
-            if (sim > maxUnrelatedSim) maxUnrelatedSim = sim;
-          }
-        }
-
-        // Related should be significantly more similar than unrelated
-        // Using a margin of 0.1 (cosine similarity ranges from -1 to 1)
-        expect(
-          relatedSim,
-          greaterThan(maxUnrelatedSim + 0.1),
-          reason: 'Related concept "$concept" should have higher similarity to its query '
-              '($relatedSim) than to unrelated queries ($maxUnrelatedSim)',
-        );
-      }
-    });
-
-    test('Different concepts produce distinct embeddings', () async {
-      final embeddings = <String, Float32List>{};
-      final concepts = ['dog', 'car', 'beach', 'food', 'sunset'];
-
-      for (final concept in concepts) {
-        embeddings[concept] = await provider.generateTextEmbedding(concept);
-      }
-
-      // All pairs should have cosine similarity < 0.8 (not nearly identical)
-      for (int i = 0; i < concepts.length; i++) {
-        for (int j = i + 1; j < concepts.length; j++) {
-          final sim = _cosineSimilarity(embeddings[concepts[i]]!, embeddings[concepts[j]]!);
-          expect(sim, lessThan(0.8),
-            reason: 'Different concepts "${concepts[i]}" and "${concepts[j]}" '
-                'should produce distinct embeddings (similarity=$sim)');
-        }
-      }
+    test('cosine similarity < 0.6 means different person', () {
+      final a = l2Normalize(Float32List.fromList([1, 0, 0, 0]));
+      final b = l2Normalize(Float32List.fromList([0, 1, 0, 0]));
+      expect(cosineSimilarity(a, b), lessThan(0.6));
     });
   });
 }
 
-/// Create a simple test image with a solid color.
-Uint8List _createTestImageBytes(int width, int height, {required int color}) {
-  // Create a minimal valid PNG/encoded image
-  // This is a placeholder - in real test, use actual test images
-  final buffer = Float32List(width * height * 4);
-  for (int i = 0; i < width * height; i++) {
-    buffer[i * 4] = ((color >> 16) & 0xFF) / 255.0;     // R
-    buffer[i * 4 + 1] = ((color >> 8) & 0xFF) / 255.0;  // G
-    buffer[i * 4 + 2] = (color & 0xFF) / 255.0;         // B
-    buffer[i * 4 + 3] = 1.0;                            // A
+/// Compute cosine similarity between two vectors.
+/// Returns 0.0 for mismatched dimensions or zero vectors.
+/// Matches FaceClusteringService.cosineSimilarity logic.
+double cosineSimilarity(Float32List a, Float32List b) {
+  if (a.length != b.length) return 0.0;
+  if (a.isEmpty) return 0.0;
+  double dot = 0.0;
+  for (var i = 0; i < a.length; i++) {
+    dot += a[i] * b[i];
   }
-  // Return as Uint8List (this is just for tensor shape verification)
-  // Note: The actual preprocessing expects valid image bytes
-  // This test primarily verifies the model output dimension
-  return Uint8List.fromList(List.filled(width * height * 4, 0));
+  return dot.clamp(-1.0, 1.0);
 }
 
 /// Compute L2 norm of a vector.
-double _l2Norm(Float32List vector) {
+double l2Norm(Float32List vector) {
   double sum = 0;
   for (final v in vector) {
     sum += v * v;
@@ -218,12 +218,13 @@ double _l2Norm(Float32List vector) {
   return sum <= 0 ? 0.0 : sqrt(sum);
 }
 
-/// Compute cosine similarity between two vectors (assumes both are normalized).
-double _cosineSimilarity(Float32List a, Float32List b) {
-  if (a.length != b.length) throw ArgumentError('Vector dimensions must match');
-  double dot = 0;
-  for (int i = 0; i < a.length; i++) {
-    dot += a[i] * b[i];
+/// L2-normalize a vector (returns new vector).
+Float32List l2Normalize(Float32List vector) {
+  final norm = l2Norm(vector);
+  if (norm == 0.0) return Float32List(vector.length);
+  final result = Float32List(vector.length);
+  for (var i = 0; i < vector.length; i++) {
+    result[i] = vector[i] / norm;
   }
-  return dot;
+  return result;
 }

@@ -33,6 +33,8 @@ final peopleClustersProvider =
     );
 
 class PeopleClustersNotifier extends AsyncNotifier<List<PersonCluster>> {
+  bool _isClustering = false;
+
   @override
   Future<List<PersonCluster>> build() async {
     final service = await ref.watch(faceClusteringServiceProviderAsync.future);
@@ -48,14 +50,20 @@ class PeopleClustersNotifier extends AsyncNotifier<List<PersonCluster>> {
     });
   }
 
-  /// Recluster all faces.
+  /// Recluster all faces. Guarded against concurrent calls.
   Future<void> recluster() async {
-    state = const AsyncLoading();
-    state = await AsyncValue.guard(() async {
-      final service = await ref.read(faceClusteringServiceProviderAsync.future);
-      await service.clusterAllFaces();
-      return service.getPeopleClusters();
-    });
+    if (_isClustering) return;
+    _isClustering = true;
+    try {
+      state = const AsyncLoading();
+      state = await AsyncValue.guard(() async {
+        final service = await ref.read(faceClusteringServiceProviderAsync.future);
+        await service.clusterAllFaces();
+        return service.getPeopleClusters();
+      });
+    } finally {
+      _isClustering = false;
+    }
   }
 }
 

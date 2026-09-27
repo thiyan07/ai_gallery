@@ -2,8 +2,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:photo_manager/photo_manager.dart';
 import 'package:share_plus/share_plus.dart';
+import '../../../core/di/providers.dart';
 import '../providers/favorites_provider.dart';
+import '../providers/gallery_providers.dart';
 import '../providers/selection_provider.dart';
+import '../services/media_service.dart';
 
 /// Floating bulk-action bar shown at the bottom when photos are selected.
 class BulkActionBar extends ConsumerWidget {
@@ -85,16 +88,100 @@ class BulkActionBar extends ConsumerWidget {
               ),
               const SizedBox(width: 8),
 
+              // Delete
+              _ActionButton(
+                icon: Icons.delete_outline,
+                label: 'Delete',
+                color: Theme.of(context).colorScheme.error,
+                onTap: () => _confirmDelete(context, ref, selection, selectionNotifier),
+              ),
+              const SizedBox(width: 8),
+
               // Close / cancel selection
               _ActionButton(
                 icon: Icons.close,
                 label: 'Cancel',
-                color: Theme.of(context).colorScheme.error,
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
                 onTap: selectionNotifier.clear,
               ),
             ],
           ),
         ),
+      ),
+    );
+  }
+
+  void _confirmDelete(
+    BuildContext context,
+    WidgetRef ref,
+    Set<String> selection,
+    SelectionNotifier selectionNotifier,
+  ) {
+    final count = selection.length;
+    final scaffoldContext = context;
+    showDialog(
+      context: scaffoldContext,
+      builder: (dialogContext) => AlertDialog(
+        icon: Icon(
+          Icons.delete_outline,
+          size: 48,
+          color: Theme.of(dialogContext).colorScheme.error,
+        ),
+        title: Text('Delete $count ${count == 1 ? 'item' : 'items'}?'),
+        content: Text(
+          'This will permanently delete $count ${count == 1 ? 'photo' : 'photos'} '
+          'from your device. This action cannot be undone.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(
+              backgroundColor: Theme.of(dialogContext).colorScheme.error,
+            ),
+            onPressed: () async {
+              Navigator.pop(dialogContext);
+              final ids = selection.toList();
+              selectionNotifier.clear();
+              final deleted = await MediaService.deleteAssets(ids);
+              if (deleted > 0) {
+                // Clean up DB records for deleted assets so search doesn't return ghosts
+                try {
+                  final db = await ref.read(appDatabaseProvider.future);
+                  for (final id in ids) {
+                    await db.database.delete('photo_metadata', where: 'photo_id = ?', whereArgs: [id]);
+                    await db.database.delete('embeddings', where: 'photo_id = ?', whereArgs: [id]);
+                    await db.database.delete('faces', where: 'photo_id = ?', whereArgs: [id]);
+                    await db.database.delete('object_tags', where: 'photo_id = ?', whereArgs: [id]);
+                    await db.database.delete('ocr_text', where: 'photo_id = ?', whereArgs: [id]);
+                    await db.database.delete('favorites', where: 'asset_id = ?', whereArgs: [id]);
+                    await db.database.delete('edit_recipes', where: 'photo_id = ?', whereArgs: [id]);
+                    await db.database.delete('analysis_state', where: 'photo_id = ?', whereArgs: [id]);
+                  }
+                } catch (_) {}
+                ref.invalidate(photoListProvider);
+                ref.invalidate(albumListProvider);
+              }
+              if (scaffoldContext.mounted) {
+                ScaffoldMessenger.of(scaffoldContext).showSnackBar(
+                  SnackBar(
+                    content: Text(
+                      deleted > 0
+                          ? 'Deleted $deleted ${deleted == 1 ? 'item' : 'items'}'
+                          : 'Failed to delete. Check permissions or try again.',
+                    ),
+                    action: deleted > 0
+                        ? SnackBarAction(label: 'OK', onPressed: () {})
+                        : null,
+                  ),
+                );
+              }
+            },
+            child: const Text('Delete'),
+          ),
+        ],
       ),
     );
   }

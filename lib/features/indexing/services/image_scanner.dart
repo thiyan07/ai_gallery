@@ -28,11 +28,12 @@ class ImageScanner {
 
     final indexedIds = await _metadataDao.getAllIndexedPhotoIds();
     final currentPhotos = <String, Photo>{};
+    final currentModified = <String, DateTime?>{};
     final newPhotos = <Photo>[];
     final modifiedPhotos = <Photo>[];
 
-    // Get all albums
-    final paths = await PhotoManager.getAssetPathList(type: RequestType.image);
+    // Get all albums (photos + videos)
+    final paths = await PhotoManager.getAssetPathList(type: RequestType.common);
 
     for (final path in paths) {
       int page = 0;
@@ -55,23 +56,12 @@ class ImageScanner {
             width: asset.width,
             height: asset.height,
             createdAt: asset.createDateTime,
-            isVideo: asset.type == AssetType.video,
           );
           currentPhotos[photo.id] = photo;
+          currentModified[photo.id] = asset.modifiedDateTime;
 
           if (!indexedIds.contains(photo.id)) {
             newPhotos.add(photo);
-          } else {
-            // Check if photo has been modified since last index
-            final existingMeta = await _metadataDao.getById(photo.id);
-            if (existingMeta != null) {
-              final DateTime? assetModified = asset.modifiedDateTime;
-              if (existingMeta.dateModified != null &&
-                  assetModified != null &&
-                  assetModified.isAfter(existingMeta.dateModified!)) {
-                modifiedPhotos.add(photo);
-              }
-            }
           }
         }
 
@@ -80,6 +70,25 @@ class ImageScanner {
         if (page > 10000) {
           _logger.warning('Hit page limit (10000 pages) during scan');
           break;
+        }
+      }
+    }
+
+    // Batch modified check: fetch existing metas in chunks (avoid N× sequential queries)
+    // SQLite IN limit ~900, chunk it.
+    const batchSize = 900;
+    final existingIds = currentPhotos.keys.where(indexedIds.contains).toList();
+    if (existingIds.isNotEmpty) {
+      for (int i = 0; i < existingIds.length; i += batchSize) {
+        final chunk = existingIds.sublist(i, (i + batchSize).clamp(0, existingIds.length));
+        final metaMap = await _metadataDao.getByIds(chunk);
+        for (final id in chunk) {
+          final meta = metaMap[id];
+          final assetModified = currentModified[id];
+          if (meta != null && meta.dateModified != null && assetModified != null && assetModified.isAfter(meta.dateModified!)) {
+            final p = currentPhotos[id];
+            if (p != null) modifiedPhotos.add(p);
+          }
         }
       }
     }

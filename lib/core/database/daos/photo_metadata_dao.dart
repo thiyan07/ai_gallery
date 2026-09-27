@@ -29,6 +29,24 @@ class PhotoMetadataDao {
     return _fromRow(rows.first);
   }
 
+  /// Returns metadata for multiple photo IDs in a single query.
+  /// Used to fix N+1 query patterns in search result processing.
+  Future<Map<String, PhotoMetadata>> getByIds(List<String> photoIds) async {
+    if (photoIds.isEmpty) return {};
+    final placeholders = photoIds.map((_) => '?').join(',');
+    final rows = await _db.query(
+      'photo_metadata',
+      where: 'photo_id IN ($placeholders)',
+      whereArgs: photoIds,
+    );
+    final map = <String, PhotoMetadata>{};
+    for (final row in rows) {
+      final meta = _fromRow(row);
+      map[meta.photoId] = meta;
+    }
+    return map;
+  }
+
   /// Returns all photo metadata entries.
   Future<List<PhotoMetadata>> getAll() async {
     final rows = await _db.query('photo_metadata', orderBy: 'indexed_at DESC');
@@ -44,6 +62,22 @@ class PhotoMetadataDao {
     );
   }
 
+  /// Deletes a photo and all related records (embeddings, faces, objects,
+  /// OCR, favorites, jobs) in a single transaction.
+  ///
+  /// This prevents orphaned rows when a photo is removed from the device.
+  Future<void> deleteCascade(String photoId) async {
+    await _db.transaction((txn) async {
+      await txn.delete('embeddings', where: 'photo_id = ?', whereArgs: [photoId]);
+      await txn.delete('faces', where: 'photo_id = ?', whereArgs: [photoId]);
+      await txn.delete('object_tags', where: 'photo_id = ?', whereArgs: [photoId]);
+      await txn.delete('ocr_text', where: 'photo_id = ?', whereArgs: [photoId]);
+      await txn.delete('favorites', where: 'asset_id = ?', whereArgs: [photoId]);
+      await txn.delete('ai_jobs', where: 'photo_id = ?', whereArgs: [photoId]);
+      await txn.delete('photo_metadata', where: 'photo_id = ?', whereArgs: [photoId]);
+    });
+  }
+
   /// Returns list of all indexed photo IDs.
   Future<Set<String>> getAllIndexedPhotoIds() async {
     final rows = await _db.query(
@@ -51,6 +85,54 @@ class PhotoMetadataDao {
       columns: ['photo_id'],
     );
     return rows.map((row) => row['photo_id'] as String).toSet();
+  }
+
+  /// Returns IDs of all assets marked as video.
+  Future<List<String>> getVideoPhotoIds() async {
+    final rows = await _db.query(
+      'photo_metadata',
+      columns: ['photo_id'],
+      where: 'media_type = ?',
+      whereArgs: ['video'],
+    );
+    return rows.map((row) => row['photo_id'] as String).toList();
+  }
+
+  /// Find photos near a given latitude/longitude within a radius (in degrees).
+  ///
+  /// Uses simple bounding-box approximation (suitable for nearby searches).
+  /// [radiusDegrees] default ~11km (0.1 degrees ≈ 11.1km at equator).
+  Future<Map<String, double>> searchByLocation({
+    required double latitude,
+    required double longitude,
+    double radiusDegrees = 0.1,
+  }) async {
+    final minLat = latitude - radiusDegrees;
+    final maxLat = latitude + radiusDegrees;
+    final minLng = longitude - radiusDegrees;
+    final maxLng = longitude + radiusDegrees;
+
+    final rows = await _db.rawQuery('''
+      SELECT photo_id,
+        ABS(latitude - ?) + ABS(longitude - ?) as distance
+      FROM photo_metadata
+      WHERE latitude IS NOT NULL AND longitude IS NOT NULL
+        AND latitude BETWEEN ? AND ?
+        AND longitude BETWEEN ? AND ?
+      ORDER BY distance ASC
+    ''', [latitude, longitude, minLat, maxLat, minLng, maxLng]);
+
+    // Normalize distances to 0-1 score (closer = higher score)
+    if (rows.isEmpty) return {};
+    final maxDist = (rows.last['distance'] as num).toDouble();
+    if (maxDist <= 0) {
+      return {for (var row in rows) row['photo_id'] as String: 1.0};
+    }
+    return {
+      for (var row in rows)
+        row['photo_id'] as String:
+            1.0 - ((row['distance'] as num).toDouble() / (maxDist * 2)),
+    };
   }
 
   Map<String, Object?> _toRow(PhotoMetadata metadata) => {
@@ -79,6 +161,7 @@ class PhotoMetadataDao {
         'album_id': metadata.albumId,
         'folder_path': metadata.folderPath,
         'media_type': metadata.mediaType,
+        'duration_seconds': metadata.durationSeconds,
         'ocr_status': metadata.ocrStatus.index,
         'ocr_model_version': metadata.ocrModelVersion,
         'face_status': metadata.faceStatus.index,
@@ -116,6 +199,7 @@ class PhotoMetadataDao {
       albumId: row['album_id'] as String?,
       folderPath: row['folder_path'] as String?,
       mediaType: row['media_type'] as String?,
+      durationSeconds: row['duration_seconds'] as int? ?? 0,
       ocrStatus: (row['ocr_status'] as int?)?.toOcrStatus() ?? OcrStatus.notProcessed,
       ocrModelVersion: row['ocr_model_version'] as String?,
       faceStatus: (row['face_status'] as int?)?.toFaceStatus() ?? FaceStatus.notProcessed,

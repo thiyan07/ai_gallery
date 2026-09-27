@@ -80,7 +80,7 @@ class BackgroundJobQueue {
     final completer = Completer<WorkerResponse>();
     final replyPort = ReceivePort();
     replyPort.listen((message) {
-      if (message is WorkerResponse) {
+      if (message is WorkerResponse && !completer.isCompleted) {
         completer.complete(message);
         replyPort.close();
       }
@@ -95,7 +95,16 @@ class BackgroundJobQueue {
 
     _workerSendPort!.send(msg);
 
-    final response = await completer.future;
+    final response = await completer.future.timeout(
+      const Duration(seconds: 60),
+      onTimeout: () {
+        replyPort.close();
+        return WorkerResponse(
+          success: false,
+          message: 'Worker did not start within 60s',
+        );
+      },
+    );
     if (!response.success) {
       throw StateError('Worker failed to start: ${response.message}');
     }
@@ -132,6 +141,7 @@ class BackgroundJobQueue {
   }
 
   /// Sends a message to the worker and awaits response.
+  /// Includes a timeout to prevent hanging if the worker isolate crashes.
   Future<WorkerResponse> _sendToWorker(WorkerMessage message) async {
     if (!_isInitialized || _workerSendPort == null) {
       throw StateError('Worker not initialized');
@@ -140,7 +150,7 @@ class BackgroundJobQueue {
     final completer = Completer<WorkerResponse>();
     final replyPort = ReceivePort();
     replyPort.listen((msg) {
-      if (msg is WorkerResponse) {
+      if (msg is WorkerResponse && !completer.isCompleted) {
         completer.complete(msg);
         replyPort.close();
       }
@@ -150,7 +160,18 @@ class BackgroundJobQueue {
     message.replyPort = replyPort.sendPort;
 
     _workerSendPort!.send(message);
-    return completer.future;
+
+    // Timeout prevents hanging if worker isolate dies silently
+    return completer.future.timeout(
+      const Duration(seconds: 30),
+      onTimeout: () {
+        replyPort.close();
+        return WorkerResponse(
+          success: false,
+          message: 'Worker did not respond within 30s (isolate may have crashed)',
+        );
+      },
+    );
   }
 
   /// Enqueues a new job and notifies the worker.
@@ -219,19 +240,63 @@ class BackgroundJobQueue {
   /// Returns all jobs regardless of status.
   Future<List<AIJob>> getAllJobs() => _dao.getAll();
 
-  /// Cancels a pending job.
+  /// Cancels a pending or running job.
+  /// For running jobs, also signals the worker isolate to abort promptly.
   Future<void> cancel(String jobId) async {
     final job = await _dao.getById(jobId);
-    if (job == null || job.status != AIJobStatus.pending) return;
+    if (job == null) return;
 
-    final cancelled = job.copyWith(
-      status: AIJobStatus.cancelled,
-      completedAt: DateTime.now(),
-    );
-    await _dao.upsert(cancelled);
-    _emit(cancelled);
-    _logger.info('Cancelled AI job $jobId');
+    if (job.status == AIJobStatus.running && _isInitialized && _workerSendPort != null) {
+      try {
+        await _sendToWorker(CancelJob(jobId: jobId));
+      } catch (e) {
+        _logger.warning('Failed to signal cancel to worker for $jobId: $e');
+      }
+      // Worker will mark cancelled itself; still update DB if worker doesn't respond quickly.
+      final current = await _dao.getById(jobId);
+      if (current != null && current.status == AIJobStatus.running) {
+        final cancelled = current.copyWith(
+          status: AIJobStatus.cancelled,
+          completedAt: DateTime.now(),
+        );
+        await _dao.upsert(cancelled);
+        _emit(cancelled);
+      }
+      _logger.info('Cancelled running AI job $jobId');
+      return;
+    }
+
+    if (job.status == AIJobStatus.pending) {
+      // Try worker-side cancel first (in case worker dequeued it concurrently)
+      if (_isInitialized && _workerSendPort != null) {
+        try {
+          await _sendToWorker(CancelJob(jobId: jobId));
+        } catch (_) {
+          // ignore — fall through to direct DB mark
+        }
+      }
+      final current = await _dao.getById(jobId);
+      if (current != null && current.status == AIJobStatus.pending) {
+        final cancelled = current.copyWith(
+          status: AIJobStatus.cancelled,
+          completedAt: DateTime.now(),
+        );
+        await _dao.upsert(cancelled);
+        _emit(cancelled);
+        _logger.info('Cancelled AI job $jobId (was ${job.status.name})');
+      }
+    }
   }
+
+  /// Cancels all pending jobs.
+  Future<void> cancelAll() async {
+    final pending = await _dao.getByStatus(AIJobStatus.pending);
+    for (final job in pending) {
+      await cancel(job.id);
+    }
+    _logger.info('Cancelled ${pending.length} pending jobs');
+  }
+
 
   /// Manually triggers processing of a specific job.
   Future<void> processJob(String jobId) async {

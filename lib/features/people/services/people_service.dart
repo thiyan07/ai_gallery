@@ -20,7 +20,7 @@ class PeopleService {
 
   /// Creates a new person with the given display name.
   Future<String> createPerson(String displayName) async {
-    _logger.info('Creating person: $displayName');
+    _logger.info('Creating person');
 
     final person = Person(
       personId: _generatePersonId(),
@@ -50,7 +50,7 @@ class PeopleService {
 
   /// Renames a person.
   Future<void> renamePerson(String personId, String newName) async {
-    _logger.info('Renaming person $personId to: $newName');
+    _logger.info('Renaming person $personId');
 
     final trimmedName = newName.trim();
     if (trimmedName.isEmpty) {
@@ -196,21 +196,41 @@ class PeopleService {
       throw ArgumentError('Cannot merge person with themselves');
     }
 
-    // Use a transaction to ensure atomicity
+    // Use a transaction to ensure atomicity.
+    // IMPORTANT: All DB operations within this block must use `txn` directly
+    // to avoid deadlocking with the underlying sqlite connection.
     await _database.database.transaction((txn) async {
-      // Reassign all faces from source to destination
-      final sourceFaces = await _getFacesForPerson(sourcePersonId);
-      final faceIds = sourceFaces.map((face) => face.id).toList();
+      // Reassign all faces from source to destination using txn batch
+      final batch = txn.batch();
+      batch.update(
+        'faces',
+        {'person_id': destinationPersonId},
+        where: 'person_id = ?',
+        whereArgs: [sourcePersonId],
+      );
+      await batch.commit();
 
-      if (faceIds.isNotEmpty) {
-        await _database.faces.assignFacesToPerson(faceIds, destinationPersonId);
-      }
+      // Mark source person as merged using txn directly
+      await txn.update(
+        'people',
+        {
+          'status': PersonStatus.merged.toValue(),
+          'updated_at': DateTime.now().toIso8601String(),
+        },
+        where: 'person_id = ?',
+        whereArgs: [sourcePersonId],
+      );
 
-      // Mark source person as merged
-      await _peopleDao.markAsMerged(sourcePersonId);
-
-      // Update destination person's timestamp
-      await _peopleDao.updateDisplayName(destinationPersonId, destPerson.displayName);
+      // Update destination person's timestamp using txn directly
+      await txn.update(
+        'people',
+        {
+          'display_name': destPerson.displayName,
+          'updated_at': DateTime.now().toIso8601String(),
+        },
+        where: 'person_id = ?',
+        whereArgs: [destinationPersonId],
+      );
     });
   }
 
@@ -248,18 +268,25 @@ class PeopleService {
       throw ArgumentError('Person not found or not active');
     }
 
-    // Use a transaction to ensure atomicity
+    // Use a transaction to ensure atomicity.
+    // IMPORTANT: All DB operations within this block must use `txn` directly
+    // to avoid deadlocking with the underlying sqlite connection.
     await _database.database.transaction((txn) async {
-      // Remove person assignment from all faces
-      final personFaces = await _getFacesForPerson(personId);
-      final faceIds = personFaces.map((face) => face.id).toList();
+      // Remove person assignment from all faces using txn directly
+      await txn.update(
+        'faces',
+        {'person_id': null},
+        where: 'person_id = ?',
+        whereArgs: [personId],
+      );
 
-      if (faceIds.isNotEmpty) {
-        await _database.faces.removeFacesFromPerson(faceIds);
-      }
-
-      // Mark person as deleted
-      await _peopleDao.markAsDeleted(personId);
+      // Mark person as deleted using txn directly
+      await txn.update(
+        'people',
+        {'status': 'deleted', 'updated_at': DateTime.now().toIso8601String()},
+        where: 'person_id = ?',
+        whereArgs: [personId],
+      );
     });
   }
 

@@ -21,20 +21,33 @@ class ModelManager {
   ModelConfig? get selectedConfig => _selectedConfig;
 
   /// Set the active model.
+  ///
+  /// Accepts either the preset key (e.g. `siglip-base-patch16-224`) or the
+  /// resolved local name (e.g. `siglip_base_patch16_224`). Previous code
+  /// passed `resolvedLocalName` from [LocalModelsScreen] which failed the
+  /// map lookup and left [_selectedConfig] null, breaking download-state
+  /// tracking and causing the AvailableModels tile to never show progress.
   void selectModel(String modelName) {
     _selectedModel = modelName;
     _selectedConfig = ModelPresets.presets[modelName];
-    logger.info('Selected model: $modelName');
+    // Fallback: search by resolvedLocalName if key lookup failed
+    _selectedConfig ??= ModelPresets.presets.values
+        .where((c) => c.resolvedLocalName == modelName)
+        .firstOrNull;
+    logger.info('Selected model: $modelName -> ${_selectedConfig?.resolvedLocalName ?? "unknown"}');
   }
 
   /// Get path to selected model, downloading if needed.
   ///
   /// Returns a [ModelDownloadResult] with state, path, and any error.
+  /// If [config] is provided, uses that directly instead of the shared selection.
   Future<ModelDownloadResult> getSelectedModelPath({
     void Function(double)? progressCallback,
     void Function(ModelState)? stateCallback,
+    ModelConfig? config,
   }) async {
-    if (_selectedConfig == null) {
+    final resolved = config ?? _selectedConfig;
+    if (resolved == null) {
       return ModelDownloadResult(
         localPath: '',
         state: ModelState.failed,
@@ -42,22 +55,20 @@ class ModelManager {
       );
     }
 
-    final config = _selectedConfig!;
-
     // Check if already installed and valid
-    if (await downloader.isModelDownloaded(config.resolvedLocalName)) {
-      logger.info('Model already installed: ${config.resolvedLocalName}');
+    if (await downloader.isModelDownloaded(resolved.resolvedLocalName)) {
+      logger.info('Model already installed: ${resolved.resolvedLocalName}');
       return ModelDownloadResult(
-        localPath: await downloader.getModelPath(config.resolvedLocalName),
+        localPath: await downloader.getModelPath(resolved.resolvedLocalName),
         state: ModelState.installed,
       );
     }
 
     // Download the model with full validation
-    logger.info('Downloading model: ${config.modelId}');
+    logger.info('Downloading model: ${resolved.modelId}');
     stateCallback?.call(ModelState.downloading);
     return downloader.downloadModelConfig(
-      config,
+      resolved,
       progressCallback: progressCallback,
       stateCallback: stateCallback,
     );

@@ -16,6 +16,7 @@ class LocalModelsScreen extends ConsumerStatefulWidget {
 
 class _LocalModelsScreenState extends ConsumerState<LocalModelsScreen> {
   late Stream<List<DownloadedModel>> _downloadedModelsStream;
+  bool _disposedStream = false;
 
   @override
   void initState() {
@@ -23,10 +24,17 @@ class _LocalModelsScreenState extends ConsumerState<LocalModelsScreen> {
     _downloadedModelsStream = _watchDownloadedModels();
   }
 
+  @override
+  void dispose() {
+    _disposedStream = true;
+    super.dispose();
+  }
+
   Stream<List<DownloadedModel>> _watchDownloadedModels() async* {
     final modelManager = ref.read(di_providers.modelManagerProvider);
-    while (true) {
+    while (!_disposedStream) {
       yield await modelManager.getDownloadedModels();
+      if (_disposedStream) break;
       await Future.delayed(const Duration(seconds: 2));
     }
   }
@@ -786,54 +794,110 @@ class _DownloadProgressDialogState extends ConsumerState<_DownloadProgressDialog
         _progress = 0.0;
       });
 
-      final result = await widget.modelManager.getSelectedModelPath(
-        progressCallback: (p) {
-          if (mounted) {
-            setState(() {
-              _progress = p;
-              _status = 'Downloading... ${(p * 100).toInt()}%';
-            });
-          }
-        },
-        stateCallback: (state) {
-          if (mounted) {
-            setState(() {
-              switch (state) {
-                case ModelState.downloading:
-                  _status = 'Downloading... ${(_progress * 100).toInt()}%';
-                  break;
-                case ModelState.verifying:
-                  _status = 'Verifying model...';
-                  break;
-                case ModelState.installed:
-                  _status = 'Download complete!';
-                  _progress = 1.0;
-                  break;
-                case ModelState.failed:
-                  _status = 'Failed';
-                  break;
-                default:
-                  break;
-              }
-            });
-          }
-        },
-      );
+      // For vision embedding models, also download the paired text encoder
+      // so search works immediately after install (previously only vision was
+      // downloaded, leaving generateTextEmbedding to throw).
+      // For OCR, detector+recognizer are a pair — download both together.
+      final presetsToDownload = <ModelConfig>[widget.preset];
+      if (widget.preset.modelType == ModelType.visionEncoder) {
+        final visionKey = ModelPresets.presets.entries
+            .where((e) => e.value == widget.preset)
+            .map((e) => e.key)
+            .firstOrNull;
+        ModelConfig? textPreset;
+        if (visionKey != null) {
+          textPreset = ModelPresets.presets['$visionKey-text'];
+        }
+        textPreset ??= ModelPresets.presets.values
+            .where((c) => c.resolvedLocalName == '${widget.preset.resolvedLocalName}_text')
+            .firstOrNull;
+        if (textPreset != null) {
+          final already = await widget.modelManager.downloader.isModelDownloaded(textPreset.resolvedLocalName);
+          if (!already) presetsToDownload.add(textPreset);
+        }
+      } else if (widget.preset.modelType == ModelType.ocrDetector) {
+        final rec = ModelPresets.presets['ppocr_rec'];
+        if (rec != null && !(await widget.modelManager.downloader.isModelDownloaded(rec.resolvedLocalName))) {
+          presetsToDownload.add(rec);
+        }
+      } else if (widget.preset.modelType == ModelType.ocrRecognizer) {
+        final det = ModelPresets.presets['ppocr_det'];
+        if (det != null && !(await widget.modelManager.downloader.isModelDownloaded(det.resolvedLocalName))) {
+          presetsToDownload.add(det);
+        }
+      }
+
+      ModelDownloadResult? lastResult;
+      for (int i = 0; i < presetsToDownload.length; i++) {
+        final cfg = presetsToDownload[i];
+        final isLast = i == presetsToDownload.length - 1;
+        final prefix = presetsToDownload.length > 1 ? '(${i + 1}/${presetsToDownload.length}) ' : '';
+        setState(() {
+          _status = '${prefix}Downloading ${cfg.description}...';
+          _progress = presetsToDownload.length > 1 ? i / presetsToDownload.length : 0.0;
+        });
+
+        lastResult = await widget.modelManager.getSelectedModelPath(
+          config: cfg,
+          progressCallback: (p) {
+            if (mounted) {
+              final base = presetsToDownload.length > 1 ? i / presetsToDownload.length : 0.0;
+              final span = 1.0 / presetsToDownload.length;
+              setState(() {
+                _progress = base + p * span;
+                _status = '${prefix}Downloading... ${(p * 100).toInt()}%';
+              });
+            }
+          },
+          stateCallback: (state) {
+            if (mounted) {
+              setState(() {
+                switch (state) {
+                  case ModelState.downloading:
+                    _status = '${prefix}Downloading... ${(_progress * 100).toInt()}%';
+                    break;
+                  case ModelState.verifying:
+                    _status = '${prefix}Verifying model...';
+                    break;
+                  case ModelState.installed:
+                    _status = isLast ? 'Download complete!' : '${prefix}Installed';
+                    if (isLast) _progress = 1.0;
+                    break;
+                  case ModelState.failed:
+                    _status = 'Failed';
+                    break;
+                  default:
+                    break;
+                }
+              });
+            }
+          },
+        );
+
+        if (!lastResult.isSuccess) {
+          throw StateError(lastResult.errorMessage ?? 'Download failed for ${cfg.resolvedLocalName}');
+        }
+      }
+
+      // Invalidate all AI providers so they re-initialize with newly downloaded models.
+      // Without this, cached providers stay in MODEL_NOT_READY / AsyncError state until restart.
+      try {
+        ref.invalidate(di_providers.embeddingProviderProvider);
+        ref.invalidate(di_providers.objectDetectionProviderProvider);
+        ref.invalidate(di_providers.faceDetectionProviderProvider);
+        ref.invalidate(di_providers.faceEmbeddingProviderProvider);
+        ref.invalidate(di_providers.ocrProviderProvider);
+        // Warm re-read embedding for search availability
+        await ref.read(di_providers.embeddingProviderProvider.future);
+      } catch (_) {}
 
       if (mounted) {
-        if (result.isSuccess) {
-          setState(() {
-            _progress = 1.0;
-            _status = 'Download complete!';
-          });
-          await Future.delayed(const Duration(milliseconds: 500));
-          if (mounted) Navigator.pop(context);
-        } else {
-          setState(() {
-            _error = 'Download failed: ${result.errorMessage ?? 'Unknown error'}';
-            _status = 'Failed';
-          });
-        }
+        setState(() {
+          _progress = 1.0;
+          _status = 'Download complete!';
+        });
+        await Future.delayed(const Duration(milliseconds: 500));
+        if (mounted) Navigator.pop(context);
       }
     } catch (e, st) {
       logger.error('Model download failed', error: e, stackTrace: st);

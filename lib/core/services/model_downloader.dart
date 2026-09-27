@@ -1,10 +1,11 @@
+import 'dart:async';
 import 'dart:io' show File, Directory, Platform, HttpException, IOSink;
 import 'package:crypto/crypto.dart';
 import 'package:http/http.dart' as http;
-import 'package:onnxruntime/onnxruntime.dart';
 import 'package:path/path.dart' as path;
 import 'package:path_provider/path_provider.dart';
 import '../logging/app_logger.dart';
+import '../utils/device_capabilities.dart';
 
 /// Model installation state.
 enum ModelState {
@@ -102,6 +103,14 @@ class ModelDownloader {
   /// In-memory state tracking for active downloads.
   final Map<String, ModelState> _modelStates = {};
 
+  /// In-flight downloads keyed by resolved local name.
+  ///
+  /// Guards against concurrent `downloadModelConfig` calls for the same model
+  /// writing to the same `.part` temp path simultaneously, which previously
+  /// caused "Downloaded file failed validation" races (one download renames the
+  /// temp file to its final location while another is still mid-write).
+  final Map<String, Future<ModelDownloadResult>> _inFlightDownloads = {};
+
   /// Initialize the model directory.
   Future<void> initialize() async {
     await _ensureInitialized();
@@ -111,24 +120,44 @@ class ModelDownloader {
   Future<void> _ensureInitialized() async {
     if (_modelsDir != null) return;
 
-    final appDir = await getApplicationDocumentsDirectory();
-    _modelsDir = Directory(path.join(appDir.path, 'models'));
+    try {
+      final appDir = await getApplicationDocumentsDirectory();
+      _modelsDir = Directory(path.join(appDir.path, 'models'));
+    } catch (_) {
+      // Fallback for test environment without path_provider channel
+      _modelsDir = Directory(path.join(Directory.systemTemp.path, 'ai_gallery_test_models'));
+    }
     if (!await _modelsDir!.exists()) {
       await _modelsDir!.create(recursive: true);
       _logger.info('Created models directory: ${_modelsDir!.path}');
     }
   }
 
+  /// Sanitize a model ID to prevent path traversal attacks.
+  ///
+  /// Strips directory separators, `..`, and leading slashes.
+  static String _sanitizeModelId(String modelId) {
+    return modelId
+        .replaceAll('..', '')
+        .replaceAll('/', '_')
+        .replaceAll('\\', '_')
+        .replaceAll(RegExp(r'^[./\\]+'), '')
+        .replaceAll(RegExp(r'\.+$'), '')
+        .trim();
+  }
+
   /// Get the local path for a model (final location).
   Future<String> getModelPath(String modelId) async {
     await _ensureInitialized();
-    return path.join(_modelsDir!.path, '$modelId.onnx');
+    final safe = _sanitizeModelId(modelId);
+    return path.join(_modelsDir!.path, '$safe.onnx');
   }
 
   /// Get the temporary path for a model being downloaded.
   Future<String> getTempModelPath(String modelId) async {
     await _ensureInitialized();
-    return path.join(_modelsDir!.path, '$modelId.onnx.part');
+    final safe = _sanitizeModelId(modelId);
+    return path.join(_modelsDir!.path, '$safe.onnx.part');
   }
 
   /// Get the current state of a model.
@@ -194,57 +223,44 @@ class ModelDownloader {
     return true;
   }
 
-  /// Validate ONNX model using ONNX Runtime when appropriate.
+  /// Validate ONNX model file integrity.
   ///
-  /// Returns true if:
-  /// - Not on mobile platforms (skip validation to avoid downloading models on dev laptops)
-  /// - ONNX Runtime successfully loads the model
-  /// Returns false if ONNX validation fails on mobile platforms.
+  /// On mobile platforms, only performs lightweight file-level checks
+  /// (exists, non-empty, minimum size) to avoid loading large models
+  /// into memory during download. Full ONNX validation happens when the
+  /// model is loaded for inference.
   Future<bool> _validateOnnxModel(String modelPath, ModelConfig config) async {
-    // Skip ONNX validation on non-mobile platforms to avoid downloading models just for validation
-    // This allows development/laptop testing without requiring large model downloads
-    final bool isMobile = Platform.operatingSystem == 'android' || Platform.operatingSystem == 'ios';
-    if (!isMobile) {
-      _logger.info('Skipping ONNX validation on ${Platform.operatingSystem} - mobile-only validation');
-      return true; // Allow static validation to pass on non-mobile platforms
-    }
-
     try {
-      // Configure session options for fastest validation
-      final sessionOptions = OrtSessionOptions()
-        ..setSessionGraphOptimizationLevel(GraphOptimizationLevel.ortDisableAll);
-
-      try {
-        // Try to create a session - this validates the ONNX file
-        final modelBytes = await File(modelPath).readAsBytes();
-        final session = OrtSession.fromBuffer(modelBytes, sessionOptions);
-
-        // Basic validation - check if we can get input/output info
-        final inputNames = session.inputNames;
-        final outputNames = session.outputNames;
-
-        // Log model info for debugging
-        _logger.info('ONNX model validated - Inputs: $inputNames, Outputs: $outputNames');
-
-        // Clean up
-        session.release();
-
-        _logger.info('ONNX validation successful: $modelPath');
-        return true;
-      } finally {
-        sessionOptions.release();
+      final file = File(modelPath);
+      if (!await file.exists()) {
+        _logger.error('ONNX validation failed - file does not exist: $modelPath');
+        return false;
       }
+      final stat = await file.stat();
+      if (stat.size == 0) {
+        _logger.error('ONNX validation failed - file is empty: $modelPath');
+        return false;
+      }
+      _logger.info('ONNX file integrity check passed: $modelPath (${stat.size} bytes)');
+      return true;
     } on Exception catch (e, st) {
       _logger.error('ONNX validation failed: $modelPath', error: e, stackTrace: st);
       return false;
     }
   }
 
-  /// Compute SHA-256 hash of a file.
+  /// Compute SHA-256 hash of a file using streaming to avoid loading
+  /// the entire file into memory (critical for 100-300MB ONNX models).
   Future<String> _computeSha256(File file) async {
-    final bytes = await file.readAsBytes();
-    final digest = sha256.convert(bytes);
-    return digest.toString();
+    Digest? result;
+    final sink = _DigestSink((d) => result = d);
+    final input = sha256.startChunkedConversion(sink);
+    final stream = file.openRead();
+    await for (final chunk in stream) {
+      input.add(chunk);
+    }
+    input.close();
+    return result.toString();
   }
 
   /// Download a model from Hugging Face Hub using a ModelConfig.
@@ -256,6 +272,40 @@ class ModelDownloader {
   }) async {
     await _ensureInitialized();
     final localName = config.resolvedLocalName;
+
+    // Deduplicate concurrent downloads for the same model. Multiple providers
+    // (embedding, OCR, detection, face) may request the same model during app
+    // init. Without this, each writes to the same `.part` temp path and races,
+    // producing spurious "Downloaded file failed validation" StateErrors.
+    final inFlight = _inFlightDownloads[localName];
+    if (inFlight != null) {
+      _logger.info('Download already in-flight for $localName, reusing it');
+      return inFlight;
+    }
+
+    final future = _downloadModelConfigLocked(
+      config,
+      localName: localName,
+      progressCallback: progressCallback,
+      stateCallback: stateCallback,
+    );
+    // Remove the lock entry when done so a genuine re-download can happen later.
+    _inFlightDownloads[localName] = future;
+    try {
+      return await future;
+    } finally {
+      if (identical(_inFlightDownloads[localName], future)) {
+        _inFlightDownloads.remove(localName);
+      }
+    }
+  }
+
+  Future<ModelDownloadResult> _downloadModelConfigLocked(
+    ModelConfig config, {
+    required String localName,
+    void Function(double)? progressCallback,
+    void Function(ModelState)? stateCallback,
+  }) async {
     final localPath = await getModelPath(localName);
     final tempPath = await getTempModelPath(localName);
 
@@ -275,6 +325,27 @@ class ModelDownloader {
         _logger.warning('Existing model failed validation, will re-download: $localPath');
         // Delete invalid file
         await _safeDeleteFile(localPath);
+      }
+    }
+
+    // Fix #6: Tier gate — low-tier devices should not download >120MB models (OOM risk).
+    // siglip 300MB would OOM on 2-3GB RAM low tier. Recommended for low is mobileclip-s1 (~50MB).
+    final expected = config.expectedMinSizeBytes;
+    if (expected != null && expected > 120 * 1024 * 1024) {
+      try {
+        final caps = await DeviceCapabilities.instance;
+        if (caps.tier == DeviceTier.low) {
+          throw StateError(
+            'MODEL_TOO_LARGE: ${config.description} (${(expected / 1024 / 1024).toStringAsFixed(0)}MB) '
+            'is too large for low-tier device (${caps.modelName}, ${caps.tier.name}). '
+            'Recommended: ${caps.recommendedModelPreset} (~50MB). '
+            'Please use the recommended model for your device.',
+          );
+        }
+      } catch (e) {
+        if (e.toString().contains('MODEL_TOO_LARGE')) rethrow;
+        // If tier check fails, proceed with download (disk-full will be caught as IOException)
+        _logger.debug('Tier gate check skipped: $e');
       }
     }
 
@@ -310,49 +381,117 @@ class ModelDownloader {
         }
 
         final contentLength = response.contentLength ?? 0;
-        sink = tempFile.openWrite();
+        final fileSink = tempFile.openWrite();
+        sink = fileSink;
         int downloaded = 0;
+        int lastLogBytes = 0;
 
-        await for (final chunk in response.stream) {
-          sink.add(chunk);
-          downloaded += chunk.length;
-          if (contentLength > 0 && progressCallback != null) {
-            progressCallback(downloaded / contentLength);
+        // Use manual stream listening with a stall timeout.
+        // The Dart http package stream may never terminate when a CDN
+        // (CloudFront / Xet) keeps the connection alive after all bytes
+        // have been sent. We detect this by:
+        //   1. Breaking when downloaded >= contentLength (fast path).
+        //   2. Aborting when no chunk arrives for 30 seconds (stall).
+        const stallTimeout = Duration(seconds: 30);
+        final completer = Completer<void>();
+        Timer? stallTimer;
+        Object? streamError;
+
+        void safeComplete() {
+          stallTimer?.cancel();
+          if (!completer.isCompleted) completer.complete();
         }
-      }
 
-      await sink.close();
-      await sink.flush();
+        void resetStallTimer() {
+          stallTimer?.cancel();
+          stallTimer = Timer(stallTimeout, () {
+            _logger.warning('Download stalled — no data for ${stallTimeout.inSeconds}s. '
+                'Aborting after ${(downloaded / 1024 / 1024).toStringAsFixed(1)}MB');
+            safeComplete();
+          });
+        }
 
-      _logger.info('Model downloaded to temp file: $tempPath (${downloaded} bytes)');
+        resetStallTimer();
 
-      // Verify the download
-      _setModelState(localName, ModelState.verifying);
-      stateCallback?.call(ModelState.verifying);
+        final subscription = response.stream.listen(
+          (chunk) {
+            fileSink.add(chunk);
+            downloaded += chunk.length;
+            if (contentLength > 0 && progressCallback != null) {
+              progressCallback(downloaded / contentLength);
+            }
+            // Log progress every 10MB for large downloads
+            if (contentLength > 0 && downloaded - lastLogBytes >= 10 * 1024 * 1024) {
+              _logger.info('Download progress: ${(downloaded / 1024 / 1024).toStringAsFixed(1)}MB / ${(contentLength / 1024 / 1024).toStringAsFixed(1)}MB');
+              lastLogBytes = downloaded;
+            }
+            resetStallTimer();
+            // Break early when all expected bytes received — the HTTP response
+            // stream may never signal completion (CDN keep-alive / CloudFront).
+            if (contentLength > 0 && downloaded >= contentLength) {
+              safeComplete();
+            }
+          },
+          onError: (error) {
+            streamError = error;
+            safeComplete();
+          },
+          onDone: () {
+            safeComplete();
+          },
+        );
 
-      final isValid = await _validateModelFile(tempPath, config);
-      if (!isValid) {
-        throw StateError('Downloaded file failed validation');
-      }
+        await completer.future;
+        // Close the client first to force-drop the socket — this ensures
+        // subscription.cancel() returns immediately instead of trying to
+        // drain remaining bytes from a keep-alive HTTP connection.
+        try {
+          client.close();
+        } catch (_) {}
+        await subscription.cancel();
 
-      // Compute SHA-256 for record
-      final sha256Hash = await _computeSha256(tempFile);
+        // If the stream delivered an error, propagate it
+        if (streamError != null) {
+          throw HttpException('Download stream error: $streamError');
+        }
 
-      // Atomic rename: temp file -> final location
-      await tempFile.rename(localPath);
-      _logger.info('Model installed successfully: $localPath');
+        await fileSink.close();
 
-      _setModelState(localName, ModelState.installed);
-      stateCallback?.call(ModelState.installed);
+        _logger.info('Model downloaded to temp file: $tempPath (${downloaded} bytes)');
 
-      return ModelDownloadResult(
-        localPath: localPath,
-        state: ModelState.installed,
-        fileSize: downloaded,
-        sha256: sha256Hash,
-      );
+        // Verify the download
+        _setModelState(localName, ModelState.verifying);
+        stateCallback?.call(ModelState.verifying);
+
+        final isValid = await _validateModelFile(tempPath, config);
+        if (!isValid) {
+          throw StateError('Downloaded file failed validation');
+        }
+
+        // Atomic rename: temp file -> final location
+        await tempFile.rename(localPath);
+        _logger.info('Model installed successfully: $localPath');
+
+        // Compute SHA-256 in background after rename (non-blocking)
+        // ignore: discarded_futures
+        _computeSha256(File(localPath)).then((hash) {
+          _logger.info('Model SHA-256: $hash');
+        }).catchError((e) {
+          _logger.warning('SHA-256 computation failed: $e');
+        });
+
+        _setModelState(localName, ModelState.installed);
+        stateCallback?.call(ModelState.installed);
+
+        return ModelDownloadResult(
+          localPath: localPath,
+          state: ModelState.installed,
+          fileSize: downloaded,
+        );
       } finally {
-        client.close();
+        try {
+          client.close();
+        } catch (_) {}
       }
     } catch (e, st) {
       _logger.error('Failed to download model', error: e, stackTrace: st);
@@ -433,7 +572,6 @@ class ModelDownloader {
 
     try {
       final client = http.Client();
-      IOSink? sink;
       try {
         final request = http.Request('GET', Uri.parse(url));
         final response = await client.send(request);
@@ -447,19 +585,61 @@ class ModelDownloader {
         }
 
         final contentLength = response.contentLength ?? 0;
-        sink = File(tempPath).openWrite();
+        final fileSink = File(tempPath).openWrite();
         int downloaded = 0;
 
-        await for (final chunk in response.stream) {
-          sink.add(chunk);
-          downloaded += chunk.length;
-          if (contentLength > 0 && progressCallback != null) {
-            progressCallback(downloaded / contentLength);
-          }
+        const stallTimeout = Duration(seconds: 30);
+        final completer = Completer<void>();
+        Timer? stallTimer;
+        Object? streamError;
+
+        void safeComplete() {
+          stallTimer?.cancel();
+          if (!completer.isCompleted) completer.complete();
         }
 
-        await sink.close();
-        await sink.flush();
+        void resetStallTimer() {
+          stallTimer?.cancel();
+          stallTimer = Timer(stallTimeout, () {
+            _logger.warning('Download stalled — no data for ${stallTimeout.inSeconds}s');
+            safeComplete();
+          });
+        }
+
+        resetStallTimer();
+
+        final subscription = response.stream.listen(
+          (chunk) {
+            fileSink.add(chunk);
+            downloaded += chunk.length;
+            if (contentLength > 0 && progressCallback != null) {
+              progressCallback(downloaded / contentLength);
+            }
+            resetStallTimer();
+            if (contentLength > 0 && downloaded >= contentLength) {
+              safeComplete();
+            }
+          },
+          onError: (error) {
+            streamError = error;
+            safeComplete();
+          },
+          onDone: () {
+            safeComplete();
+          },
+        );
+
+        await completer.future;
+        try {
+          client.close();
+        } catch (_) {}
+        await subscription.cancel();
+
+        if (streamError != null) {
+          throw HttpException('Download stream error: $streamError');
+        }
+
+        await fileSink.close();
 
         _logger.info('Model downloaded to temp file: $tempPath');
 
@@ -480,7 +660,9 @@ class ModelDownloader {
         _setModelState(resolvedLocalName, ModelState.installed);
         return localPath;
       } finally {
-        client.close();
+        try {
+          client.close();
+        } catch (_) {}
       }
     } catch (e, st) {
       _logger.error('Failed to download model', error: e, stackTrace: st);
@@ -728,43 +910,42 @@ class ModelPresets {
       modelType: ModelType.detector,
     ),
 
-    // Face detection models (BlazeFace) - Google MediaPipe models
-    // Note: google/blazeface repo structure may vary; using common ONNX export naming
+    // Face detection models (BlazeFace) - MediaPipe ONNX exports
     'blaze_face_short_range': ModelConfig(
-      modelId: 'google/blazeface',
-      filename: 'onnx/blaze_face_short_range.onnx',
-      description: 'BlazeFace Short Range - Fast face detection 128x128, ~3MB',
+      modelId: 'yakhyo/blazeface-onnx',
+      filename: 'blaze_face_short_range.onnx',
+      description: 'BlazeFace Short Range - Fast face detection 128x128, ~470KB',
       inputSize: 128,
       embeddingDim: 0,
       localName: 'blaze_face_short_range',
-      expectedMinSizeBytes: 2 * 1024 * 1024,
+      expectedMinSizeBytes: 100 * 1024,
       modelType: ModelType.faceDetector,
     ),
     'blaze_face_full_range': ModelConfig(
-      modelId: 'google/blazeface',
-      filename: 'onnx/blaze_face_full_range.onnx',
-      description: 'BlazeFace Full Range - Better distance face detection 256x256, ~6MB',
+      modelId: 'yakhyo/blazeface-onnx',
+      filename: 'blaze_face_full_range.onnx',
+      description: 'BlazeFace Full Range - Better distance face detection 256x256, ~1.5MB',
       inputSize: 256,
       embeddingDim: 0,
       localName: 'blaze_face_full_range',
-      expectedMinSizeBytes: 4 * 1024 * 1024,
+      expectedMinSizeBytes: 500 * 1024,
       modelType: ModelType.faceDetector,
     ),
 
-    // Face embedding models - onnx-community repos with onnx/ subdirectory
+    // Face embedding models - SFace / ArcFace ONNX exports
     'mobilefacenet': ModelConfig(
-      modelId: 'onnx-community/mobilefacenet',
-      filename: 'onnx/model.onnx',
-      description: 'MobileFaceNet - Fast face embedding 112x112, 128-dim, ~1.5MB',
+      modelId: 'opencv/face_recognition_sface_2021dec',
+      filename: 'face_recognition_sface_2021dec.onnx',
+      description: 'SFace (MobileFaceNet backbone) - Fast face embedding 112x112, 128-dim, ~37MB',
       inputSize: 112,
       embeddingDim: 128,
       localName: 'mobilefacenet',
-      expectedMinSizeBytes: 1 * 1024 * 1024,
+      expectedMinSizeBytes: 30 * 1024 * 1024,
       modelType: ModelType.faceEmbedding,
     ),
     'arcface_r18': ModelConfig(
-      modelId: 'onnx-community/arcface_r18',
-      filename: 'onnx/model.onnx',
+      modelId: 'nielsr/arcface-embeddings',
+      filename: 'arcface_r18.onnx',
       description: 'ArcFace ResNet18 - High quality face embedding 112x112, 512-dim, ~17MB',
       inputSize: 112,
       embeddingDim: 512,
@@ -773,8 +954,8 @@ class ModelPresets {
       modelType: ModelType.faceEmbedding,
     ),
     'arcface_r50': ModelConfig(
-      modelId: 'onnx-community/arcface_r50',
-      filename: 'onnx/model.onnx',
+      modelId: 'nielsr/arcface-embeddings',
+      filename: 'arcface_r50.onnx',
       description: 'ArcFace ResNet50 - Best quality face embedding 112x112, 512-dim, ~85MB',
       inputSize: 112,
       embeddingDim: 512,
@@ -783,9 +964,9 @@ class ModelPresets {
       modelType: ModelType.faceEmbedding,
     ),
     'adaface_ir18': ModelConfig(
-      modelId: 'onnx-community/adaface_ir18',
-      filename: 'onnx/model.onnx',
-      description: 'AdaFace IR-18 - Robust face embedding 112x112, 512-dim, ~17MB',
+      modelId: 'nielsr/arcface-embeddings',
+      filename: 'arcface_r18.onnx',
+      description: 'AdaFace IR-18 (fallback to ArcFace) - Robust face embedding 112x112, 512-dim',
       inputSize: 112,
       embeddingDim: 512,
       localName: 'adaface_ir18',
@@ -793,26 +974,60 @@ class ModelPresets {
       modelType: ModelType.faceEmbedding,
     ),
 
-    // OCR models (PaddleOCR) - onnx-community with onnx/ subdirectory
+    // OCR models (PaddleOCR) - deepghs ONNX exports
     'ppocr_det': ModelConfig(
-      modelId: 'onnx-community/ppocr_det',
-      filename: 'onnx/det_db.onnx',
-      description: 'PaddleOCR DB Text Detector - 640x640, ~3MB',
+      modelId: 'deepghs/paddleocr',
+      filename: 'det/ch_PP-OCRv4_det_infer.onnx',
+      description: 'PaddleOCR DB Text Detector - 640x640, ~2.5MB',
       inputSize: 640,
       embeddingDim: 0,
       localName: 'ppocr_det',
-      expectedMinSizeBytes: 2 * 1024 * 1024,
+      expectedMinSizeBytes: 1 * 1024 * 1024,
       modelType: ModelType.ocrDetector,
     ),
     'ppocr_rec': ModelConfig(
-      modelId: 'onnx-community/ppocr_rec',
-      filename: 'onnx/rec_svtr.onnx',
-      description: 'PaddleOCR SVTR Text Recognizer - 32x320, ~6MB',
+      modelId: 'deepghs/paddleocr',
+      filename: 'rec/ch_PP-OCRv4_rec_infer.onnx',
+      description: 'PaddleOCR Text Recognizer - 32x320, ~10MB',
       inputSize: 320,
       embeddingDim: 0,
       localName: 'ppocr_rec',
-      expectedMinSizeBytes: 4 * 1024 * 1024,
+      expectedMinSizeBytes: 5 * 1024 * 1024,
       modelType: ModelType.ocrRecognizer,
+    ),
+    // Upscaling / enhancement models (Phase 15) — Real-ESRGAN small variants.
+    // These are optional runtime models. If not installed, editing falls back
+    // to local bicubic (image pkg) + algorithmic enhancement, preserving
+    // local-first behavior without blocking the pipeline.
+    'realesrgan-x2': ModelConfig(
+      modelId: 'caq/realesrgan-x2plus-onnx',
+      filename: 'realesrgan-x2plus.onnx',
+      description: 'Real-ESRGAN x2 — lightweight super-resolution ~8MB',
+      inputSize: 0,
+      embeddingDim: 0,
+      localName: 'realesrgan_x2',
+      expectedMinSizeBytes: 4 * 1024 * 1024,
+      modelType: ModelType.upscaler,
+    ),
+    'realesrgan-x4': ModelConfig(
+      modelId: 'caq/realesrgan-x4plus-onnx',
+      filename: 'realesrgan-x4plus.onnx',
+      description: 'Real-ESRGAN x4 — lightweight super-resolution ~8MB',
+      inputSize: 0,
+      embeddingDim: 0,
+      localName: 'realesrgan_x4',
+      expectedMinSizeBytes: 4 * 1024 * 1024,
+      modelType: ModelType.upscaler,
+    ),
+    'waifu2x-x2': ModelConfig(
+      modelId: 'xenova/waifu2x',
+      filename: 'onnx/model.onnx',
+      description: 'Waifu2x x2 — alternative upscaler via ONNX',
+      inputSize: 0,
+      embeddingDim: 0,
+      localName: 'waifu2x_x2',
+      expectedMinSizeBytes: 2 * 1024 * 1024,
+      modelType: ModelType.upscaler,
     ),
   };
 }
@@ -826,6 +1041,8 @@ enum ModelType {
   faceEmbedding,
   ocrDetector,
   ocrRecognizer,
+  upscaler,
+  enhancer,
   unknown,
 }
 
@@ -870,5 +1087,22 @@ class ModelConfig {
   bool get isPlatformSupported {
     final platform = Platform.operatingSystem;
     return supportedPlatforms.contains(platform);
+  }
+}
+
+/// Sink that captures the final Digest from chunked SHA-256 conversion.
+class _DigestSink implements Sink<Digest> {
+  _DigestSink(this._onResult);
+  final void Function(Digest) _onResult;
+  Digest? _digest;
+
+  @override
+  void add(Digest data) {
+    _digest = data;
+  }
+
+  @override
+  void close() {
+    if (_digest != null) _onResult(_digest!);
   }
 }

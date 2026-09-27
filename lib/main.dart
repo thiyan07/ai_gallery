@@ -75,12 +75,31 @@ void main() async {
   // Pre-load SharedPreferences synchronously to prevent visual flickering
   final prefs = await SharedPreferences.getInstance();
 
+  // Create the container and pre-resolve the database BEFORE any widget builds.
+  // On slow devices the database FutureProvider is still AsyncLoading when the
+  // first frame renders, and sync providers/screens calling `.requireValue`
+  // would throw AsyncValueIsLoadingException (breaking search, video playback,
+  // photo view, etc.). Awaiting it here removes the loading window entirely.
+  final container = ProviderContainer(
+    overrides: [
+      // Inject pre-loaded SharedPreferences into the provider from di_providers
+      di_providers.sharedPreferencesProvider.overrideWithValue(prefs),
+      // Inject Phase 23 assistant overrides
+      ...di_providers.assistantOverrides,
+    ],
+  );
+
+  // Best-effort warm-up; never block startup on a DB failure (the app will
+  // show the friendly error screen instead of failing to launch).
+  try {
+    await container.read(di_providers.appDatabaseProvider.future);
+  } catch (e) {
+    const ConsoleAppLogger().error('Database pre-load failed: $e');
+  }
+
   runApp(
-    ProviderScope(
-      overrides: [
-        // Inject pre-loaded SharedPreferences into the provider from di_providers
-        di_providers.sharedPreferencesProvider.overrideWithValue(prefs),
-      ],
+    UncontrolledProviderScope(
+      container: container,
       child: const AIGalleryApp(),
     ),
   );

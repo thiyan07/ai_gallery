@@ -44,3 +44,11 @@ app.*.map.json
 /android/app/profile
 /android/app/release
 assets/models/*.onnx
+
+# ChatGPT/OpenCode loop artifacts (local only, never commit)
+.chatgpt-loop-history.md
+.chatgpt-loop.json
+.playwright-mcp/
+audit_summary.txt
+test.txt
+Gemini_Generated_Image*.png

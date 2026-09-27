@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/di/providers.dart' as di_providers;
 import '../providers/settings_providers.dart';
+import '../services/api_connection_tester.dart';
 
 class ApiKeysScreen extends ConsumerStatefulWidget {
   const ApiKeysScreen({super.key});
@@ -176,8 +177,23 @@ class _ApiKeysScreenState extends ConsumerState<ApiKeysScreen> {
       if (provider == 'Anthropic') _isTestingAnthropic = true;
     });
 
-    // Simulate API connection verification delay
-    await Future.delayed(const Duration(seconds: 2));
+    final secureStorage = ref.read(di_providers.secureStorageServiceProvider);
+    final tester = ApiConnectionTester(secureStorage);
+
+    ConnectionTestResult result;
+    switch (provider) {
+      case 'OpenAI':
+        result = await tester.testOpenAI();
+      case 'Google Vision':
+        result = await tester.testGoogleVision();
+      case 'Anthropic':
+        result = await tester.testAnthropic();
+      default:
+        result = const ConnectionTestResult(
+          success: false,
+          message: 'Unknown provider.',
+        );
+    }
 
     if (mounted) {
       setState(() {
@@ -186,12 +202,11 @@ class _ApiKeysScreenState extends ConsumerState<ApiKeysScreen> {
         if (provider == 'Anthropic') _isTestingAnthropic = false;
       });
 
-      // Show mock result
-      _showConnectionResultDialog(provider, true);
+      _showConnectionResultDialog(provider, result.success, result.message);
     }
   }
 
-  void _showConnectionResultDialog(String provider, bool success) {
+  void _showConnectionResultDialog(String provider, bool success, [String? message]) {
     showDialog(
       context: context,
       builder: (context) {
@@ -207,9 +222,10 @@ class _ApiKeysScreenState extends ConsumerState<ApiKeysScreen> {
             ],
           ),
           content: Text(
-            success
-                ? 'Successfully established connection with $provider servers. Your API key is valid and working.'
-                : 'Unable to connect to $provider. Please check your network connection and ensure your API key is correct.',
+            message ??
+                (success
+                    ? 'Successfully established connection with $provider servers. Your API key is valid and working.'
+                    : 'Unable to connect to $provider. Please check your network connection and ensure your API key is correct.'),
           ),
           actions: [
             FilledButton(

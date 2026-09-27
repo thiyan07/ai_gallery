@@ -40,4 +40,17 @@ class FavoritesDao {
     );
     return rows.isNotEmpty;
   }
+
+  /// Batch check: returns set of ids that are favorites (avoids N+1).
+  Future<Set<String>> filterFavorites(Set<String> ids) async {
+    if (ids.isEmpty) return {};
+    final placeholders = List.filled(ids.length, '?').join(',');
+    final rows = await _db.query(
+      'favorites',
+      columns: ['asset_id'],
+      where: 'asset_id IN ($placeholders)',
+      whereArgs: ids.toList(),
+    );
+    return rows.map((r) => r['asset_id'] as String).toSet();
+  }
 }

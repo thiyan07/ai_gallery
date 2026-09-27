@@ -3,6 +3,7 @@ import 'package:photo_manager/photo_manager.dart';
 
 import '../../../core/di/providers.dart' as di_providers;
 import '../../../core/services/model_downloader.dart';
+import '../../../core/utils/device_capabilities.dart';
 
 class OnboardingState {
   final int currentStep;
@@ -135,26 +136,40 @@ class OnboardingNotifier extends Notifier<OnboardingState> {
     }
     state = state.copyWith(isCompleted: true, currentStep: 5);
 
-    // Download the default SigLIP model in background after onboarding
-    _downloadDefaultModel();
+    // Download default model in background without blocking onboarding UX.
+    // Uses unawaited with proper error handling; not `void async`.
+    _downloadDefaultModelWithGuard();
   }
 
-  void _downloadDefaultModel() {
-    // Fire and forget - download the default model in background using ModelPresets
-    ref.read(di_providers.modelDownloaderProvider).downloadModelConfig(
-      ModelPresets.presets['siglip-base-patch16-224']!,
+  void _downloadDefaultModelWithGuard() {
+    // ignore: discarded_futures
+    _downloadDefaultModel().catchError((Object e, StackTrace st) {
+      final logger = ref.read(di_providers.appLoggerProvider);
+      logger.warning('Failed to download default model', error: e, stackTrace: st);
+    });
+  }
+
+  Future<void> _downloadDefaultModel() async {
+    // Determine the right model for this device tier
+    final capabilities = await DeviceCapabilities.instance;
+    final presetName = capabilities.recommendedModelPreset;
+    final preset = ModelPresets.presets[presetName];
+    if (preset == null) {
+      final logger = ref.read(di_providers.appLoggerProvider);
+      logger.warning('No model preset found for tier ${capabilities.tier.name}');
+      return;
+    }
+
+    final result = await ref.read(di_providers.modelDownloaderProvider).downloadModelConfig(
+      preset,
       progressCallback: (progress) {
         // Could update UI with progress if needed
       },
-    ).catchError((e, st) {
+    );
+    if (!result.isSuccess) {
       final logger = ref.read(di_providers.appLoggerProvider);
-      logger.warning('Failed to download default model', error: e, stackTrace: st);
-      return ModelDownloadResult(
-        localPath: '',
-        state: ModelState.failed,
-        errorMessage: e.toString(),
-      );
-    });
+      logger.warning('Failed to download default model ($presetName): ${result.errorMessage}');
+    }
   }
 
   Future<void> resetOnboarding() async {

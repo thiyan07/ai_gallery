@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'dart:math';
 import 'dart:typed_data';
@@ -10,6 +11,7 @@ import 'package:dart_sentencepiece_tokenizer/dart_sentencepiece_tokenizer.dart';
 import 'package:ai_gallery/core/logging/app_logger.dart';
 import 'package:ai_gallery/core/services/model_downloader.dart';
 import 'package:ai_gallery/core/services/model_manager.dart';
+import 'package:ai_gallery/core/utils/async_init_guard.dart';
 import 'package:ai_gallery/core/utils/device_capabilities.dart';
 import 'package:ai_gallery/ai/providers/embedding_provider.dart';
 import 'package:ai_gallery/domain/models/face_detection.dart';
@@ -68,6 +70,7 @@ class LocalEmbeddingProvider implements EmbeddingProvider {
   DeviceCapabilities? _capabilities;
   String? _resolvedPreset;
   int? _resolvedInputSize;
+  final _initGuard = AsyncInitGuard();
 
   // ImageNet normalization constants
   static const _mean = [0.485, 0.456, 0.406];
@@ -104,15 +107,26 @@ class LocalEmbeddingProvider implements EmbeddingProvider {
   Future<bool> get isAvailable async {
     try {
       await _ensureInitialized();
-      return _visionSession != null && _textSession != null;
+      return _visionSession != null && _textSession != null && _tokenizer != null;
     } catch (e) {
       _logger.warning('Local embedding provider not available: $e');
       return false;
     }
   }
 
+  /// Whether image-only embedding is available (for indexing).
+  bool get isVisionAvailable => _visionSession != null;
+
+  /// Whether text search is available.
+  bool get isTextAvailable => _textSession != null && _tokenizer != null;
+
   /// Initialize the ONNX Runtime sessions with auto-selected model.
   Future<void> _ensureInitialized() async {
+    if (_initialized) return;
+    await _initGuard.run(_doInitialize);
+  }
+
+  Future<void> _doInitialize() async {
     if (_initialized) return;
 
     try {
@@ -157,24 +171,26 @@ class LocalEmbeddingProvider implements EmbeddingProvider {
           _logger.info('Loading ONNX vision model from assets: $_modelAssetPath');
           visionModelBytes = await _loadModelFromAssets(_modelAssetPath);
         } else if (!isHighEndTier) {
-          // For low/medium tiers: check if we have a tier-appropriate bundled model
-          // For now, we return a clear error to show the "model not ready" UI
-          // instead of crashing. The UI will guide user to download models.
+          // For low/medium tiers: no bundled asset; require download.
+          // Don't mark initialized — allow retry after download.
           _logger.warning(
             'Required model "$_resolvedPreset" not available for ${tier.name} tier device. '
-            'Model download failed. Please download from Settings > AI Models.',
+            'Model download pending. Please download from Settings > AI Models.',
           );
-          // Mark as unavailable rather than throwing - UI will handle gracefully
-          _initialized = true;
           _visionSession = null;
           _textSession = null;
-          return;
-        } else {
-          // High-end but no bundled assets configured
+          _tokenizer = null;
+          // Keep _initialized false so next call retries after download.
           throw StateError(
-            'No bundled assets configured for fallback. '
-            'Please ensure siglip_base_patch16_224.onnx and siglip_text_encoder.onnx '
-            'are in assets/models/ and declared in pubspec.yaml.',
+            'MODEL_NOT_READY: Required model "$_resolvedPreset" not installed. '
+            'Please download it from Settings > AI Models.',
+          );
+        } else {
+          // High-end but no bundled assets configured (SigLIP is
+          // download-only since the APK size-cut) and no download present.
+          throw StateError(
+            'MODEL_NOT_READY: Required model "$_resolvedPreset" not installed. '
+            'Please download it from Settings > AI Models.',
           );
         }
       }
@@ -188,7 +204,9 @@ class LocalEmbeddingProvider implements EmbeddingProvider {
         ModelDownloadResult? textResult;
         try {
           textResult = await _modelManager.getSelectedModelPath();
-        } catch (_) {}
+        } catch (e) {
+          _logger.debug('Text encoder model not available from ModelManager: $e');
+        }
 
         if (textResult != null && textResult.isSuccess && textResult.localPath.isNotEmpty) {
           _logger.info('Loading ONNX text encoder from: ${textResult.localPath}');
@@ -290,10 +308,12 @@ class LocalEmbeddingProvider implements EmbeddingProvider {
       final data = await rootBundle.load(assetPath);
       return data.buffer.asUint8List();
     } catch (e) {
+      // Bundled SigLIP assets were removed from the APK (size-cut): models are
+      // runtime-downloadable via ModelManager/Settings > AI Models. Never ask
+      // the user to add files to assets/.
       throw StateError(
-        'Failed to load ONNX model from assets at "$assetPath". '
-        'Please add a SigLIP/CLIP ONNX model to assets/models/ and update pubspec.yaml, '
-        'or ensure ModelManager can download ${_determinePreset()} from Hugging Face. '
+        'MODEL_NOT_READY: Required model "${_determinePreset()}" is not installed and no bundled asset exists at "$assetPath". '
+        'Please download it from Settings > AI Models. '
         'Error: $e',
       );
     }
@@ -358,7 +378,7 @@ class LocalEmbeddingProvider implements EmbeddingProvider {
     await _ensureInitialized();
 
     if (_visionSession == null) {
-      throw StateError('ONNX vision session not initialized');
+      throw StateError('MODEL_NOT_READY: Vision session not initialized — please download embedding model from Settings > AI Models');
     }
 
     try {
@@ -411,7 +431,7 @@ class LocalEmbeddingProvider implements EmbeddingProvider {
 
     if (_textSession == null || _tokenizer == null) {
       throw StateError(
-        'Text encoder model or tokenizer not available. '
+        'MODEL_NOT_READY: Text encoder model or tokenizer not available. '
         'Please download the text encoder model from Settings > AI Models, '
         'or ensure the bundled text encoder asset and tokenizer are available. '
         'Without the text encoder, semantic search cannot generate query embeddings.',
@@ -466,7 +486,7 @@ class LocalEmbeddingProvider implements EmbeddingProvider {
         // L2 normalize
         final normalized = _l2Normalize(embedding);
 
-        _logger.info('Generated text embedding for: "$text" (dim: ${normalized.length})');
+        _logger.info('Generated text embedding (dim: ${normalized.length})');
         return Float32List.fromList(normalized);
       } finally {
         runOptions.release();
@@ -587,11 +607,26 @@ class LocalEmbeddingProvider implements EmbeddingProvider {
     }
   }
 
+  /// Reset so next call re-initializes (used after model download).
+  void resetForRetry() {
+    _visionSession?.release();
+    _textSession?.release();
+    _visionSession = null;
+    _textSession = null;
+    _tokenizer = null;
+    _initialized = false;
+    _initGuard.reset();
+  }
+
   @override
   Future<void> dispose() async {
     _visionSession?.release();
     _textSession?.release();
+    _visionSession = null;
+    _textSession = null;
+    _tokenizer = null;
     _initialized = false;
+    _initGuard.reset();
   }
 
   @override

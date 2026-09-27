@@ -356,8 +356,9 @@ class FaceClusteringService {
   }
 
   /// Returns all person clusters with their faces.
+  /// Only active people are returned; merged/deleted persons are excluded.
   Future<List<PersonCluster>> getPeopleClusters() async {
-    final people = await _database.peopleDao.getAll();
+    final people = await _database.peopleDao.getAllActive();
     final clusters = <PersonCluster>[];
 
     for (final person in people) {
@@ -368,11 +369,14 @@ class FaceClusteringService {
             personId: person.personId,
             label: person.displayName ?? 'Unknown',
             faces: faces,
+            coverPhotoId: person.coverPhotoId,
           ),
         );
       }
     }
 
+    // Largest groups first for a useful default ordering.
+    clusters.sort((a, b) => b.faceCount.compareTo(a.faceCount));
     return clusters;
   }
 
@@ -391,7 +395,7 @@ class FaceClusteringService {
       person.copyWith(displayName: newLabel, updatedAt: DateTime.now()),
     );
     _logger.info(
-      'Renamed person ${cluster.personId} from "$currentLabel" to "$newLabel"',
+      'Renamed person ${cluster.personId}',
     );
   }
 
@@ -421,7 +425,7 @@ class FaceClusteringService {
     }
 
     _logger.info(
-      'Deleted cluster "$label" (${faceIds.length} faces unassigned)',
+      'Deleted cluster (${faceIds.length} faces unassigned)',
     );
   }
 }

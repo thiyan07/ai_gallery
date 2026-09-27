@@ -74,6 +74,8 @@ class MetadataExtractor {
       blurScore: qualityMetrics.blurScore,
       qualityScore: qualityMetrics.qualityScore,
       indexedAt: DateTime.now(),
+      mediaType: asset.type == AssetType.video ? 'video' : 'image',
+      durationSeconds: asset.type == AssetType.video ? asset.duration : 0,
     );
   }
 
@@ -102,6 +104,8 @@ class MetadataExtractor {
       blurScore: null,
       qualityScore: null,
       indexedAt: DateTime.now(),
+      mediaType: asset.type == AssetType.video ? 'video' : 'image',
+      durationSeconds: asset.type == AssetType.video ? asset.duration : 0,
     );
   }
 

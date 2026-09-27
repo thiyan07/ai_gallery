@@ -45,14 +45,14 @@ class DeviceMediaDataSource {
 
   /// Loads all albums from the device.
   Future<List<AssetPathEntity>> getAlbums({
-    RequestType type = RequestType.image,
+    RequestType type = RequestType.common,
   }) {
     return PhotoManager.getAssetPathList(type: type, onlyAll: false);
   }
 
   /// Loads all albums with sorting by creation date (most recent first).
   Future<List<AssetPathEntity>> getAlbumsSortedByDate({
-    RequestType type = RequestType.image,
+    RequestType type = RequestType.common,
     bool ascending = false,
   }) {
     final filterOption = FilterOptionGroup(

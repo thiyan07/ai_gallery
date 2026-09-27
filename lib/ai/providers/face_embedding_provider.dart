@@ -10,6 +10,7 @@ import 'package:onnxruntime/onnxruntime.dart';
 import '../../core/logging/app_logger.dart';
 import '../../core/services/model_downloader.dart';
 import '../../core/services/model_manager.dart';
+import '../../core/utils/async_init_guard.dart';
 import '../../core/utils/device_capabilities.dart';
 import '../../domain/models/face_detection.dart';
 import 'embedding_provider.dart';
@@ -39,13 +40,13 @@ class FaceEmbeddingProvider implements EmbeddingProvider {
     int? inputSize,
   })  : _logger = logger,
         _modelManager = modelManager,
-        _modelAssetPath = modelAssetPath ?? 'assets/models/mobilefacenet.onnx',
+        _modelAssetPath = modelAssetPath,
         _modelVariant = modelVariant,
         _inputSize = inputSize ?? 112;
 
   final AppLogger _logger;
   final ModelManager _modelManager;
-  final String _modelAssetPath;
+  final String? _modelAssetPath;
   final String _modelVariant;
   final int _inputSize;
 
@@ -53,6 +54,7 @@ class FaceEmbeddingProvider implements EmbeddingProvider {
   bool _initialized = false;
   int _embeddingDim = 128;
   DeviceCapabilities? _capabilities;
+  final _initGuard = AsyncInitGuard();
 
   @override
   String get id => 'face_$_modelVariant';
@@ -76,6 +78,11 @@ class FaceEmbeddingProvider implements EmbeddingProvider {
 
   /// Initialize the ONNX Runtime session with face embedding model.
   Future<void> _ensureInitialized() async {
+    if (_initialized) return;
+    await _initGuard.run(_doInitialize);
+  }
+
+  Future<void> _doInitialize() async {
     if (_initialized) return;
 
     try {
@@ -109,9 +116,17 @@ class FaceEmbeddingProvider implements EmbeddingProvider {
         final file = File(result.localPath);
         modelBytes = await file.readAsBytes();
       } else {
-        // Fallback to bundled asset
-        _logger.info('Loading face embedding model from assets: $_modelAssetPath');
-        modelBytes = await _loadModelFromAssets();
+        // Fallback to bundled asset — only valid for mobilefacenet.
+        // ArcFace variants have no bundled asset; require download.
+        final assetPath = _resolveAssetPath();
+        if (assetPath == null) {
+          throw StateError(
+            'MODEL_NOT_READY: Face embedding model "$_modelVariant" not installed. '
+            'Please download it from Settings > AI Models.',
+          );
+        }
+        _logger.info('Loading face embedding model from assets: $assetPath');
+        modelBytes = await _loadModelFromAssets(assetPath);
       }
 
       // Configure ONNX session options
@@ -154,10 +169,21 @@ class FaceEmbeddingProvider implements EmbeddingProvider {
     return cores <= 2 ? 1 : min(cores, 4);
   }
 
+  String? _resolveAssetPath() {
+    if (_modelAssetPath != null) return _modelAssetPath;
+    // Bundled assets only include mobilefacenet; arcface variants must be downloaded.
+    if (_modelVariant == 'mobilefacenet') return 'assets/models/mobilefacenet.onnx';
+    return null;
+  }
+
   /// Load model bytes from Flutter assets.
-  Future<Uint8List> _loadModelFromAssets() async {
+  Future<Uint8List> _loadModelFromAssets([String? assetPath]) async {
+    final path = assetPath ?? _resolveAssetPath();
+    if (path == null) {
+      throw StateError('MODEL_NOT_READY: No bundled asset for variant $_modelVariant');
+    }
     try {
-      final data = await rootBundle.load(_modelAssetPath);
+      final data = await rootBundle.load(path);
       return data.buffer.asUint8List();
     } catch (e) {
       _logger.error('Failed to load model from assets: $e');
@@ -170,7 +196,7 @@ class FaceEmbeddingProvider implements EmbeddingProvider {
     await _ensureInitialized();
 
     if (_session == null) {
-      throw StateError('ONNX session not initialized');
+      throw StateError('MODEL_NOT_READY: Face embedding session not initialized');
     }
 
     final stopwatch = Stopwatch()..start();
@@ -469,7 +495,7 @@ class FaceEmbeddingProvider implements EmbeddingProvider {
     await _ensureInitialized();
 
     if (_session == null) {
-      throw StateError('ONNX session not initialized');
+      throw StateError('MODEL_NOT_READY: Face embedding session not initialized');
     }
 
     final stopwatch = Stopwatch()..start();
@@ -586,10 +612,18 @@ class FaceEmbeddingProvider implements EmbeddingProvider {
     }
   }
 
+  void resetForRetry() {
+    _session?.release();
+    _session = null;
+    _initialized = false;
+    _initGuard.reset();
+  }
+
   @override
   Future<void> dispose() async {
     _session?.release();
     _session = null;
     _initialized = false;
+    _initGuard.reset();
   }
 }

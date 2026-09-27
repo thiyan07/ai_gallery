@@ -9,6 +9,7 @@ import 'package:onnxruntime/onnxruntime.dart';
 
 import '../../core/logging/app_logger.dart';
 import '../../core/services/model_manager.dart';
+import '../../core/utils/async_init_guard.dart';
 import '../../core/utils/device_capabilities.dart';
 import '../../domain/models/object_detection_model.dart';
 import 'object_detection_provider.dart';
@@ -64,6 +65,7 @@ class PaddleOcrProvider implements ObjectDetectionProvider {
   OrtSession? _recognizerSession;
   bool _initialized = false;
   List<String> _charset = _defaultCharset();
+  final _initGuard = AsyncInitGuard();
 
   @override
   String get id => 'paddleocr';
@@ -87,6 +89,11 @@ class PaddleOcrProvider implements ObjectDetectionProvider {
 
   /// Initialize the ONNX Runtime sessions with PaddleOCR models.
   Future<void> _ensureInitialized() async {
+    if (_initialized) return;
+    await _initGuard.run(_doInitialize);
+  }
+
+  Future<void> _doInitialize() async {
     if (_initialized) return;
 
     try {
@@ -223,12 +230,21 @@ class PaddleOcrProvider implements ObjectDetectionProvider {
     return chars;
   }
 
+  void resetForRetry() {
+    _detectorSession?.release();
+    _recognizerSession?.release();
+    _detectorSession = null;
+    _recognizerSession = null;
+    _initialized = false;
+    _initGuard.reset();
+  }
+
   @override
   Future<ObjectDetectionResult> detectObjects(Uint8List imageBytes) async {
     await _ensureInitialized();
 
     if (_detectorSession == null || _recognizerSession == null) {
-      throw StateError('ONNX sessions not initialized');
+      throw StateError('MODEL_NOT_READY: OCR sessions not initialized — please download PaddleOCR models from Settings > AI Models');
     }
 
     final stopwatch = Stopwatch()..start();
@@ -723,6 +739,7 @@ class PaddleOcrProvider implements ObjectDetectionProvider {
     _recognizerSession?.release();
     _recognizerSession = null;
     _initialized = false;
+    _initGuard.reset();
   }
 }
 

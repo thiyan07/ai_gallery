@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:photo_manager/photo_manager.dart';
@@ -48,6 +49,7 @@ class MediaPermissionNotifier extends AsyncNotifier<bool> {
   }
 
   void _log(String message, {bool isError = false}) {
+    if (!kDebugMode) return;
     if (isError) {
       debugPrint('🔴 [MediaPermissionNotifier] $message');
     } else {
@@ -104,6 +106,7 @@ class AlbumListNotifier extends AsyncNotifier<List<AssetPathEntity>> {
   }
 
   void _log(String message, {bool isError = false}) {
+    if (!kDebugMode) return;
     if (isError) {
       debugPrint('🔴 [AlbumListNotifier] $message');
     } else {
@@ -141,6 +144,8 @@ final photoListProvider =
 
 class PhotoListNotifier extends AsyncNotifier<List<AssetEntity>> {
   static const _pageSize = 80;
+  /// Maximum photos to keep in memory (prevents unbounded growth on large libraries).
+  static const _maxInMemory = 500;
   PhotoRepository? _repository;
   int _nextPage = 1;
 
@@ -168,7 +173,7 @@ class PhotoListNotifier extends AsyncNotifier<List<AssetEntity>> {
     final selectedAlbum = album ?? albums.first;
 
     // Log for debugging
-    _log('Loading album: ${selectedAlbum.name} (id: ${selectedAlbum.id})');
+    _log('Loading album (id: ${selectedAlbum.id})');
 
     final photos = await _repo.getPhotoEntities(
       album: selectedAlbum,
@@ -180,6 +185,7 @@ class PhotoListNotifier extends AsyncNotifier<List<AssetEntity>> {
   }
 
   void _log(String message, {bool isError = false}) {
+    if (!kDebugMode) return;
     if (isError) {
       debugPrint('🔴 [PhotoListNotifier] $message');
     } else {
@@ -214,7 +220,13 @@ class PhotoListNotifier extends AsyncNotifier<List<AssetEntity>> {
           await repository.getPhotoEntities(album: album, page: _nextPage, pageSize: _pageSize);
       _nextPage++;
       _log('Loaded ${more.length} more photos (page $_nextPage)');
-      state = AsyncData([...state.value ?? [], ...more]);
+      final List<AssetEntity> combined = [...?state.value, ...more];
+      // Trim oldest entries if list exceeds max to prevent OOM
+      if (combined.length > _maxInMemory) {
+        state = AsyncData(combined.sublist(combined.length - _maxInMemory));
+      } else {
+        state = AsyncData(combined);
+      }
     } catch (e, stackTrace) {
       _log('Error loading more photos: $e', isError: true);
       _log('Stack trace: $stackTrace', isError: true);

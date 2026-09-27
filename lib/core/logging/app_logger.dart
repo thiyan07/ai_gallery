@@ -9,6 +9,9 @@ abstract class AppLogger {
 }
 
 /// Default logger that prints to the debug console.
+///
+/// In release builds only [error] is logged (for crash diagnostics).
+/// All other levels are stripped to prevent PII leakage.
 class ConsoleAppLogger implements AppLogger {
   const ConsoleAppLogger();
 
@@ -21,12 +24,16 @@ class ConsoleAppLogger implements AppLogger {
 
   @override
   void info(String message, {Object? error, StackTrace? stackTrace}) {
-    _log('INFO', message, error: error, stackTrace: stackTrace);
+    if (kDebugMode) {
+      _log('INFO', message, error: error, stackTrace: stackTrace);
+    }
   }
 
   @override
   void warning(String message, {Object? error, StackTrace? stackTrace}) {
-    _log('WARN', message, error: error, stackTrace: stackTrace);
+    if (kDebugMode) {
+      _log('WARN', message, error: error, stackTrace: stackTrace);
+    }
   }
 
   @override

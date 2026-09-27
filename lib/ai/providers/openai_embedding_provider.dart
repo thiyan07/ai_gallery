@@ -73,6 +73,10 @@ class OpenAIEmbeddingProvider implements EmbeddingProvider {
 
   @override
   Future<Float32List> generateEmbedding(Uint8List imageBytes) async {
+    _logger.warning(
+      'PRIVACY: Image data being sent to OpenAI cloud API for embedding generation. '
+      'Ensure user consent has been obtained.',
+    );
     final apiKey = await _getApiKey();
     if (apiKey == null || apiKey.isEmpty) {
       throw StateError('OpenAI API key not configured');

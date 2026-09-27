@@ -55,4 +55,23 @@ class OcrDao {
     );
     return rows.map(OcrRecord.fromMap).toList();
   }
+
+  /// Search OCR text within a specific set of photo IDs.
+  /// Used for person+OCR queries where we already know the candidate photo IDs.
+  Future<List<OcrRecord>> searchOcrTextInPhotos(
+    String query,
+    List<String> photoIds, {
+    int limit = 100,
+  }) async {
+    if (photoIds.isEmpty) return [];
+    final placeholders = photoIds.map((_) => '?').join(',');
+    final rows = await _db.query(
+      tableName,
+      where: 'text LIKE ? AND photo_id IN ($placeholders)',
+      whereArgs: ['%$query%', ...photoIds],
+      orderBy: 'created_at DESC',
+      limit: limit,
+    );
+    return rows.map(OcrRecord.fromMap).toList();
+  }
 }

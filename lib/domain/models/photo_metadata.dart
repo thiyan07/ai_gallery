@@ -129,6 +129,9 @@ class PhotoMetadata {
   /// Media type (e.g., 'image', 'video').
   final String? mediaType;
 
+  /// Duration in seconds (videos only, 0 for images).
+  final int durationSeconds;
+
   /// OCR processing status.
   final OcrStatus ocrStatus;
 
@@ -167,6 +170,7 @@ class PhotoMetadata {
     this.albumId,
     this.folderPath,
     this.mediaType,
+    this.durationSeconds = 0,
     this.ocrStatus = OcrStatus.notProcessed,
     this.ocrModelVersion,
     this.faceStatus = FaceStatus.notProcessed,
@@ -199,6 +203,7 @@ class PhotoMetadata {
     String? albumId,
     String? folderPath,
     String? mediaType,
+    int? durationSeconds,
     OcrStatus? ocrStatus,
     String? ocrModelVersion,
     FaceStatus? faceStatus,
@@ -230,6 +235,7 @@ class PhotoMetadata {
       albumId: albumId ?? this.albumId,
       folderPath: folderPath ?? this.folderPath,
       mediaType: mediaType ?? this.mediaType,
+      durationSeconds: durationSeconds ?? this.durationSeconds,
       ocrStatus: ocrStatus ?? this.ocrStatus,
       ocrModelVersion: ocrModelVersion ?? this.ocrModelVersion,
       faceStatus: faceStatus ?? this.faceStatus,
@@ -269,6 +275,7 @@ class PhotoMetadata {
       albumId: row['album_id'] as String?,
       folderPath: row['folder_path'] as String?,
       mediaType: row['media_type'] as String?,
+      durationSeconds: row['duration_seconds'] as int? ?? 0,
       ocrStatus: (row['ocr_status'] as int?)?.toOcrStatus() ?? OcrStatus.notProcessed,
       ocrModelVersion: row['ocr_model_version'] as String?,
       faceStatus: (row['face_status'] as int?)?.toFaceStatus() ?? FaceStatus.notProcessed,

@@ -52,13 +52,104 @@ class ObjectTagDao {
 
   /// Get top object labels across all photos.
   Future<Map<String, int>> getTopLabels({int limit = 20}) async {
-    final rows = await _db.rawQuery('''
-      SELECT label, COUNT(*) as count
-      FROM $tableName
-      GROUP BY label
-      ORDER BY count DESC
-      LIMIT ?
-    ''', [limit]);
+    final rows = await _db.rawQuery(
+      'SELECT label, COUNT(*) as count '
+      'FROM $tableName '
+      'GROUP BY label '
+      'ORDER BY count DESC '
+      'LIMIT ?',
+      [limit],
+    );
     return {for (var row in rows) row['label'] as String: row['count'] as int};
+  }
+
+  /// Find photo IDs that contain any of the specified object labels.
+  ///
+  /// Returns photo IDs that have at least one matching label, with the
+  /// highest confidence score per photo.
+  Future<Map<String, double>> searchByLabels(
+    List<String> labels, {
+    double minConfidence = 0.3,
+  }) async {
+    if (labels.isEmpty) return {};
+
+    final placeholders = labels.map((_) => '?').join(',');
+    final rows = await _db.rawQuery(
+      'SELECT photo_id, MAX(confidence) as max_confidence '
+      'FROM $tableName '
+      'WHERE label IN ($placeholders) AND confidence >= ? '
+      'GROUP BY photo_id',
+      [...labels, minConfidence],
+    );
+
+    return {
+      for (var row in rows)
+        row['photo_id'] as String:
+            (row['max_confidence'] as num).toDouble(),
+    };
+  }
+
+  /// Find photo IDs that contain ALL of the specified object labels (AND).
+  Future<List<String>> searchByAllLabels(
+    List<String> labels, {
+    double minConfidence = 0.3,
+  }) async {
+    if (labels.isEmpty) return [];
+
+    final placeholders = labels.map((_) => '?').join(',');
+    final rows = await _db.rawQuery(
+      'SELECT photo_id, COUNT(DISTINCT label) as matched_labels '
+      'FROM $tableName '
+      'WHERE label IN ($placeholders) AND confidence >= ? '
+      'GROUP BY photo_id '
+      'HAVING matched_labels = ?',
+      [...labels, minConfidence, labels.length],
+    );
+
+    return rows.map((row) => row['photo_id'] as String).toList();
+  }
+
+  /// Find photo IDs that contain NONE of the specified labels.
+  Future<List<String>> excludeLabels(
+    List<String> excludeLabels, {
+    List<String>? requireAnyLabel,
+    double minConfidence = 0.3,
+  }) async {
+    if (excludeLabels.isEmpty) return [];
+
+    final placeholders = excludeLabels.map((_) => '?').join(',');
+
+    final excludedRows = await _db.rawQuery(
+      'SELECT DISTINCT photo_id '
+      'FROM $tableName '
+      'WHERE label IN ($placeholders) AND confidence >= ?',
+      [...excludeLabels, minConfidence],
+    );
+
+    final excludedIds =
+        excludedRows.map((row) => row['photo_id'] as String).toSet();
+
+    if (excludedIds.isEmpty) return [];
+
+    List<String> allPhotoIds;
+    if (requireAnyLabel != null && requireAnyLabel.isNotEmpty) {
+      final reqPlaceholders = requireAnyLabel.map((_) => '?').join(',');
+      final allRows = await _db.rawQuery(
+        'SELECT DISTINCT photo_id '
+        'FROM $tableName '
+        'WHERE label IN ($reqPlaceholders) AND confidence >= ?',
+        [...requireAnyLabel, minConfidence],
+      );
+      allPhotoIds =
+          allRows.map((row) => row['photo_id'] as String).toList();
+    } else {
+      final allRows = await _db.rawQuery(
+        'SELECT DISTINCT photo_id FROM $tableName',
+      );
+      allPhotoIds =
+          allRows.map((row) => row['photo_id'] as String).toList();
+    }
+
+    return allPhotoIds.where((id) => !excludedIds.contains(id)).toList();
   }
 }

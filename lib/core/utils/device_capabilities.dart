@@ -174,6 +174,8 @@ class DeviceCapabilities {
   }
 
   /// Read total RAM from /proc/meminfo (Linux/Android).
+  /// Uses sync read but only called inside async detect(); for true
+  /// background use prefer [_readTotalRamAsync].
   static int _readTotalRam() {
     try {
       final file = File('/proc/meminfo');
@@ -183,9 +185,22 @@ class DeviceCapabilities {
         return int.parse(match.group(1)!) * 1024; // Convert kB to bytes
       }
     } catch (_) {
-      // Ignore errors
+      // Fall back to 4GB default if /proc/meminfo is unreadable
     }
     return 4 * 1024 * 1024 * 1024; // Default 4GB
+  }
+
+  /// Async read of RAM — kept for future use on main isolate startup.
+  // ignore: unused_element
+  static Future<int> _readTotalRamAsync() async {
+    try {
+      final contents = await File('/proc/meminfo').readAsString();
+      final match = RegExp(r'MemTotal:\s+(\d+)\s+kB').firstMatch(contents);
+      if (match != null) {
+        return int.parse(match.group(1)!) * 1024;
+      }
+    } catch (_) {}
+    return 4 * 1024 * 1024 * 1024;
   }
 
   /// Get CPU core count.

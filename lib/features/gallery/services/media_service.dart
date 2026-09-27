@@ -36,7 +36,7 @@ class MediaService {
   /// Loads all albums (AssetPathEntity) from the device.
   /// [type] — filter by image, video, or both.
   static Future<List<AssetPathEntity>> getAlbums({
-    RequestType type = RequestType.image,
+    RequestType type = RequestType.common,
   }) async {
     return PhotoManager.getAssetPathList(
       type: type,
@@ -56,5 +56,16 @@ class MediaService {
   /// Fetches a single AssetEntity by its id string.
   static Future<AssetEntity?> getById(String id) async {
     return AssetEntity.fromId(id);
+  }
+
+  /// Deletes assets from the device gallery by their IDs.
+  ///
+  /// Returns the number of successfully deleted assets.
+  /// Requires full photo library permission (not limited).
+  /// On Android 14+ this uses the system trash/deletion dialog.
+  static Future<int> deleteAssets(List<String> assetIds) async {
+    if (assetIds.isEmpty) return 0;
+    final result = await PhotoManager.editor.deleteWithIds(assetIds);
+    return result.length;
   }
 }

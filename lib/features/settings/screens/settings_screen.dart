@@ -7,6 +7,7 @@ import '../../onboarding/providers/onboarding_provider.dart';
 import '../../indexing/screens/indexing_screen.dart';
 import '../screens/api_keys_screen.dart';
 import '../screens/local_models_screen.dart';
+import '../screens/storage_insights_screen.dart';
 import '../providers/settings_providers.dart';
 import '../../../core/di/providers.dart';
 
@@ -442,6 +443,19 @@ class SettingsScreen extends ConsumerWidget {
           ),
 
           // Storage Path location
+          ListTile(
+            title: const Text('Storage Insights'),
+            subtitle: const Text('Library, AI processing, and privacy overview'),
+            leading: const Icon(Icons.storage_outlined),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () {
+              Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (_) => const StorageInsightsScreen(),
+                ),
+              );
+            },
+          ),
           ListTile(
             title: const Text('Storage Location'),
             subtitle: const Text('/home/thiyan/projects/ai_gallery/data'),

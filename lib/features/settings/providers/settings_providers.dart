@@ -108,7 +108,7 @@ class ModelManagementNotifier extends Notifier<ModelManagementState> {
       final modelManager = ref.read(di_providers.modelManagerProvider);
       modelManager.selectModel(preset.resolvedLocalName);
 
-      await modelManager.getSelectedModelPath(progressCallback: (progress) {
+      await modelManager.getSelectedModelPath(config: preset, progressCallback: (progress) {
         state = state.copyWith(downloadProgress: progress);
       });
 

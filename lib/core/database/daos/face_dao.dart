@@ -43,6 +43,25 @@ class FaceDao {
     return rows.map(FaceDetectionRecord.fromMap).toList();
   }
 
+  /// Batch: get all faces for a set of photo IDs (avoids N+1).
+  Future<Map<String, List<FaceDetectionRecord>>> getFacesByPhotoIds(
+    Set<String> photoIds,
+  ) async {
+    if (photoIds.isEmpty) return {};
+    final placeholders = List.filled(photoIds.length, '?').join(',');
+    final rows = await _db.query(
+      tableName,
+      where: 'photo_id IN ($placeholders)',
+      whereArgs: photoIds.toList(),
+    );
+    final map = <String, List<FaceDetectionRecord>>{};
+    for (final row in rows) {
+      final rec = FaceDetectionRecord.fromMap(row);
+      (map[rec.photoId] ??= []).add(rec);
+    }
+    return map;
+  }
+
   /// Get a face by its ID.
   Future<FaceDetectionRecord?> getFaceById(String faceId) async {
     final rows = await _db.query(

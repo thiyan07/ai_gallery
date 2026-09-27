@@ -1,4 +1,4 @@
-/// Domain model representing a photo or video asset from the device library.
+/// Domain model representing a photo asset from the device library.
 class Photo {
   /// Unique asset identifier from the device media library.
   final String id;
@@ -15,12 +15,6 @@ class Photo {
   /// When the photo was taken or added to the library.
   final DateTime? createdAt;
 
-  /// Whether this asset is a video.
-  final bool isVideo;
-
-  /// Duration in seconds (videos only).
-  final int durationSeconds;
-
   /// Whether the user has marked this photo as a favorite.
   final bool isFavorite;
 
@@ -30,8 +24,6 @@ class Photo {
     required this.width,
     required this.height,
     this.createdAt,
-    this.isVideo = false,
-    this.durationSeconds = 0,
     this.isFavorite = false,
   });
 
@@ -41,8 +33,6 @@ class Photo {
     int? width,
     int? height,
     DateTime? createdAt,
-    bool? isVideo,
-    int? durationSeconds,
     bool? isFavorite,
   }) {
     return Photo(
@@ -51,8 +41,6 @@ class Photo {
       width: width ?? this.width,
       height: height ?? this.height,
       createdAt: createdAt ?? this.createdAt,
-      isVideo: isVideo ?? this.isVideo,
-      durationSeconds: durationSeconds ?? this.durationSeconds,
       isFavorite: isFavorite ?? this.isFavorite,
     );
   }

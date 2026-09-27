@@ -15,8 +15,6 @@ class PhotoMapper {
       width: asset.width,
       height: asset.height,
       createdAt: asset.createDateTime,
-      isVideo: asset.type == AssetType.video,
-      durationSeconds: asset.duration,
       isFavorite: isFavorite,
     );
   }

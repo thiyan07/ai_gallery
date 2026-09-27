@@ -10,6 +10,7 @@ import 'package:onnxruntime/onnxruntime.dart';
 import '../../core/logging/app_logger.dart';
 import '../../core/services/model_downloader.dart';
 import '../../core/services/model_manager.dart';
+import '../../core/utils/async_init_guard.dart';
 import '../../core/utils/device_capabilities.dart';
 import '../../domain/models/face_detection.dart';
 import 'face_detection_provider.dart';
@@ -60,6 +61,7 @@ class BlazeFaceProvider implements FaceDetectionProvider {
   bool _initialized = false;
   int _inputSize = 128;
   int _numAnchors = 896;
+  final _initGuard = AsyncInitGuard();
 
   // Anchor boxes for BlazeFace (pre-computed for 128x128 input)
   late final List<List<double>> _anchors;
@@ -83,6 +85,11 @@ class BlazeFaceProvider implements FaceDetectionProvider {
 
   /// Initialize the ONNX Runtime session with BlazeFace model.
   Future<void> _ensureInitialized() async {
+    if (_initialized) return;
+    await _initGuard.run(_doInitialize);
+  }
+
+  Future<void> _doInitialize() async {
     if (_initialized) return;
 
     try {
@@ -215,12 +222,19 @@ class BlazeFaceProvider implements FaceDetectionProvider {
     return anchors;
   }
 
+  void resetForRetry() {
+    _session?.release();
+    _session = null;
+    _initialized = false;
+    _initGuard.reset();
+  }
+
   @override
   Future<List<FaceDetection>> detectFaces(Uint8List imageBytes) async {
     await _ensureInitialized();
 
     if (_session == null) {
-      throw StateError('ONNX session not initialized');
+      throw StateError('MODEL_NOT_READY: Face detection session not initialized — please download BlazeFace model from Settings > AI Models');
     }
 
     final stopwatch = Stopwatch()..start();
@@ -248,19 +262,29 @@ class BlazeFaceProvider implements FaceDetectionProvider {
 
         stopwatch.stop();
 
-        // Parse BlazeFace output format: [1, 896, 16] - 896 anchors, 16 values each
-        // 16 = 4 bbox regression + 1 confidence + 10 keypoints (5 points * 2) + 1 (extra?)
+        // Parse BlazeFace output.
+        // MediaPipe-style models produce two output tensors:
+        //   outputs[0] = regressors  [1, num_anchors, 16]  (bbox + keypoints)
+        //   outputs[1] = scores      [1, num_anchors, 1]   (face confidence, logit)
+        // Some combined models produce a single [1, num_anchors, 16] tensor
+        // where index 4 is confidence — we detect which variant we have.
         if (outputs.isEmpty) {
           throw StateError('No output from model');
         }
 
-        final outputTensor = outputs[0] as OrtValueTensor?;
-        if (outputTensor == null) {
-          throw StateError('No output tensor from model');
+        final regressorsTensor = outputs[0] as OrtValueTensor?;
+        if (regressorsTensor == null) {
+          throw StateError('No regressors tensor from model');
+        }
+
+        OrtValueTensor? scoresTensor;
+        if (outputs.length >= 2) {
+          scoresTensor = outputs[1] as OrtValueTensor?;
         }
 
         final detections = _parseBlazeFaceOutput(
-          outputTensor,
+          regressorsTensor,
+          scoresTensor,
           imageWidth,
           imageHeight,
         );
@@ -306,54 +330,61 @@ class BlazeFaceProvider implements FaceDetectionProvider {
     return OrtValueTensor.createTensorWithDataList(inputData, [1, 3, _inputSize, _inputSize]);
   }
 
-  /// Parse BlazeFace output [1, num_anchors, 16] -> FaceDetection list.
+  /// Parse BlazeFace output -> FaceDetection list.
   ///
-  /// Output format per anchor:
-  /// - 0-3: bbox regression (dx, dy, dw, dh) relative to anchor
-  /// - 4: confidence score (sigmoid)
-  /// - 5-14: 5 keypoints * 2 (x, y) relative to anchor
-  /// - 15: extra (possibly angle or additional score)
+  /// Two model variants are supported:
+  /// 1. Dual-output (MediaPipe-style): regressors [1, N, 16] + scores [1, N, 1]
+  ///    - regressors 0-3: bbox regression (dx, dy, dw, dh)
+  ///    - regressors 4-13: 5 keypoints * 2
+  ///    - scores: face confidence logit (apply sigmoid)
+  /// 2. Combined: single [1, N, 16] tensor
+  ///    - 0-3: bbox, 4: confidence (sigmoid), 5-14: keypoints
   List<FaceDetection> _parseBlazeFaceOutput(
-    OrtValueTensor outputTensor,
+    OrtValueTensor regressorsTensor,
+    OrtValueTensor? scoresTensor,
     int imageWidth,
     int imageHeight,
   ) {
-    final outputValue = outputTensor.value;
-    if (outputValue is! Float32List) {
-      throw StateError('Unexpected output tensor type: ${outputValue.runtimeType}');
+    final regValue = regressorsTensor.value;
+    if (regValue is! Float32List) {
+      throw StateError('Unexpected regressors type: ${regValue.runtimeType}');
     }
+    final regData = regValue;
 
-    final data = outputValue;
-
-    // Expected shape: [1, num_anchors, 16]
-    final expectedLength = 1 * _numAnchors * 16;
-    if (data.length != expectedLength) {
-      _logger.warning('Unexpected output tensor size: ${data.length} (expected $expectedLength)');
+    // Determine if this is a dual-output model (scores separate)
+    final bool hasSeparateScores = scoresTensor != null;
+    Float32List? scoreData;
+    if (hasSeparateScores) {
+      final sVal = scoresTensor!.value;
+      if (sVal is Float32List) {
+        scoreData = sVal;
+      }
     }
 
     final detections = <FaceDetection>[];
-
-    // First pass: extract all detections above threshold
-    // Bounding boxes / keypoints are normalized to [0,1] of the model input,
-    // so no explicit scaling to image dimensions is required (consumers expect
-    // normalized coordinates).
     final rawDetections = <_RawDetection>[];
 
     for (var i = 0; i < _numAnchors; i++) {
-      final baseIdx = i * 16;
+      final regBase = i * 16;
+      if (regBase + 15 >= regData.length) break;
 
-      if (baseIdx + 15 >= data.length) break;
-
-      // Confidence score (index 4)
-      final confidence = _sigmoid(data[baseIdx + 4]);
+      // Confidence: from separate scores tensor or index 4 of combined tensor
+      final double confidence;
+      if (hasSeparateScores && scoreData != null) {
+        final scoreIdx = i;
+        if (scoreIdx >= scoreData.length) break;
+        confidence = _sigmoid(scoreData[scoreIdx]);
+      } else {
+        confidence = _sigmoid(regData[regBase + 4]);
+      }
 
       if (confidence < _confidenceThreshold) continue;
 
       // Bbox regression (indices 0-3)
-      final dx = data[baseIdx + 0];
-      final dy = data[baseIdx + 1];
-      final dw = data[baseIdx + 2];
-      final dh = data[baseIdx + 3];
+      final dx = regData[regBase + 0];
+      final dy = regData[regBase + 1];
+      final dw = regData[regBase + 2];
+      final dh = regData[regBase + 3];
 
       // Decode bbox from anchor
       final anchor = _anchors[i];
@@ -362,21 +393,20 @@ class BlazeFaceProvider implements FaceDetectionProvider {
       final anchorW = anchor[2];
       final anchorH = anchor[3];
 
-      // Apply regression: bbox = anchor * exp(dw, dh) + (dx, dy) * anchor_wh
       final cx = anchorCx + dx * anchorW;
       final cy = anchorCy + dy * anchorH;
       final w = anchorW * exp(dw);
       final h = anchorH * exp(dh);
 
-      // Extract keypoints (indices 5-14, 5 points * 2)
+      // Keypoints: in dual-output models, start at index 4; in combined, at index 5
+      final kpOffset = hasSeparateScores ? 4 : 5;
       final keypoints = <FaceKeypoint>[];
       const keypointNames = ['right_eye', 'left_eye', 'nose', 'mouth_right', 'mouth_left'];
 
       for (var k = 0; k < 5; k++) {
-        final kx = data[baseIdx + 5 + k * 2];
-        final ky = data[baseIdx + 5 + k * 2 + 1];
+        final kx = regData[regBase + kpOffset + k * 2];
+        final ky = regData[regBase + kpOffset + k * 2 + 1];
 
-        // Keypoints are relative to anchor center
         final kpx = anchorCx + kx * anchorW;
         final kpy = anchorCy + ky * anchorH;
 
@@ -523,6 +553,7 @@ class BlazeFaceProvider implements FaceDetectionProvider {
     _session?.release();
     _session = null;
     _initialized = false;
+    _initGuard.reset();
   }
 }
 

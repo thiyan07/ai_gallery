@@ -67,8 +67,15 @@ class AIManagerImpl implements AIManager {
   @override
   bool get isCloudAvailable {
     final settings = _settingsProvider();
+    // True local mode never uses cloud; caller must also verify API keys
+    // before actual cloud calls. This getter only checks mode, not key presence.
+    // For hybrid/byok without keys, cloud calls will fallback/error downstream.
     if (settings.aiMode == AiMode.local) return false;
-    return settings.aiMode == AiMode.byok || settings.aiMode == AiMode.hybrid;
+    // Explicitly handle hybrid/byok; unknown future modes default to false.
+    if (settings.aiMode == AiMode.byok || settings.aiMode == AiMode.hybrid) {
+      return true;
+    }
+    return false;
   }
 
   @override
