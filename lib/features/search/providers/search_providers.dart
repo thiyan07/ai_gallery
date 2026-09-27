@@ -1,7 +1,10 @@
 import 'dart:async';
+import 'dart:typed_data';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:ai_gallery/ai/providers/embedding_provider.dart';
 import 'package:ai_gallery/core/di/providers.dart';
+import 'package:ai_gallery/domain/models/face_detection.dart';
 import 'package:ai_gallery/features/search/services/search_service.dart';
 import 'package:ai_gallery/features/search/services/natural_language_parser.dart';
 import 'package:ai_gallery/features/search/services/ranking_engine.dart';
@@ -92,16 +95,55 @@ final searchSuggestionServiceProvider = Provider<SearchSuggestionService>((ref) 
   return service;
 });
 
+/// Fallback embedding provider used while the real model is still loading
+/// or when no provider is available. Throws MODEL_NOT_READY so
+/// SearchService can gracefully fall back to OCR-only search.
+class _FallbackEmbeddingProvider implements EmbeddingProvider {
+  @override
+  String get id => 'fallback';
+  @override
+  String get name => 'Fallback (loading)';
+  @override
+  String get modelId => 'unknown';
+  @override
+  Future<bool> get isAvailable async => false;
+  @override
+  Future<Float32List> generateEmbedding(Uint8List _) =>
+      throw StateError('MODEL_NOT_READY');
+  @override
+  Future<Float32List> generateTextEmbedding(String _) =>
+      throw StateError('MODEL_NOT_READY');
+  @override
+  Future<Float32List> generateEmbeddingFromFace({
+    required Uint8List imageBytes,
+    required FaceDetection faceDetection,
+  }) =>
+      throw StateError('MODEL_NOT_READY');
+  @override
+  Future<void> initialize() async {}
+  @override
+  Future<void> warmUp() async {}
+  @override
+  Future<void> dispose() async {}
+}
+
 /// Search service for semantic/text search.
-/// Uses requireValue on the async providers to get the resolved values.
+/// Handles AsyncLoading by falling back to OCR-only via _FallbackEmbeddingProvider.
 final searchServiceProvider = Provider<SearchService>((ref) {
-  final embeddingProvider = ref.watch(embeddingProviderProvider).requireValue;
+  final embeddingAsync = ref.watch(embeddingProviderProvider);
   final database = ref.watch(appDatabaseProvider).requireValue;
   final rankingEngine = ref.watch(rankingEngineProvider);
   final suggestionService = ref.watch(searchSuggestionServiceProvider);
 
+  final EmbeddingProvider effectiveProvider =
+      embeddingAsync.maybeWhen(
+        data: (p) => p,
+        orElse: () => null,
+      ) ??
+      _FallbackEmbeddingProvider() as EmbeddingProvider;
+
   return SearchService(
-    embeddingProvider: embeddingProvider!,
+    embeddingProvider: effectiveProvider,
     database: database,
     rankingEngine: rankingEngine,
     suggestionService: suggestionService,
@@ -147,28 +189,20 @@ class SearchQueryNotifier extends Notifier<String> {
 
 /// Search results stream using natural language parsing.
 /// This watches the parsed query provider and uses the semantic query + filters for search.
+///
+/// NOTE: Search must NOT throw MODEL_NOT_READY when the embedding model is missing —
+/// [SearchService] already handles graceful fallback to OCR-only and person/object
+/// paths. Throwing here previously made every search show an error even though
+/// OCR text search could still return results.
 final searchResultsProvider = FutureProvider<List<RankedSearchResult>>((ref) async {
   // Watch the parsed query which includes both semantic query and extracted filters
   final parsedQueryAsync = ref.watch(parsedQueryProvider);
   // Also watch manual filters
   final manualFilters = ref.watch(searchFiltersProvider);
-  // Check if semantic search is available
-  final semanticAvailableAsync = ref.watch(semanticSearchAvailableProvider);
 
   return parsedQueryAsync.when(
     data: (parsedQuery) async {
       if (parsedQuery.semanticQuery.trim().isEmpty) return [];
-
-      // Check if semantic search is available (model loaded)
-      final available = await semanticAvailableAsync.when(
-        data: (value) => value,
-        loading: () => false,
-        error: (_, __) => false,
-      );
-      if (!available) {
-        // Throw a specific error that the UI can catch and display
-        throw StateError('MODEL_NOT_READY: Semantic search model is not available. Please download the required AI model from Settings > AI Models.');
-      }
 
       // Combine parsed filters with manual filters
       final combinedFilters = parsedQuery.filters.copyWith(
@@ -210,8 +244,7 @@ final searchFiltersProvider =
   SearchFiltersNotifier.new,
 );
 
-class SearchFiltersNotifier extends Notifier<SearchFilters> {
-  @override
+class SearchFiltersNotifier extends Notifier<SearchFilters> {  @override
   SearchFilters build() => SearchFilters();
 
   void setMinQuality(double? quality) {
@@ -267,3 +300,34 @@ class SearchFiltersNotifier extends Notifier<SearchFilters> {
     state = SearchFilters();
   }
 }
+
+// ─────────────────────────────────────────────
+// Index coverage (semantic indexing completeness)
+// ─────────────────────────────────────────────
+
+/// How many photos have semantic embeddings vs total photos.
+/// Photos without embeddings are invisible to meaning-based search.
+class IndexCoverage {
+  const IndexCoverage({
+    required this.totalPhotos,
+    required this.embeddedPhotos,
+  });
+
+  final int totalPhotos;
+  final int embeddedPhotos;
+
+  int get unindexed => (totalPhotos - embeddedPhotos).clamp(0, totalPhotos);
+  bool get isComplete => unindexed == 0;
+}
+
+final indexCoverageProvider = FutureProvider<IndexCoverage>((ref) async {
+  final database = ref.watch(appDatabaseProvider).requireValue;
+  final totalRows = await database.database
+      .rawQuery('SELECT COUNT(*) as cnt FROM photo_metadata');
+  final embeddedRows = await database.database.rawQuery(
+    'SELECT COUNT(DISTINCT photo_id) as cnt FROM embeddings',
+  );
+  final total = (totalRows.first['cnt'] as int?) ?? 0;
+  final embedded = (embeddedRows.first['cnt'] as int?) ?? 0;
+  return IndexCoverage(totalPhotos: total, embeddedPhotos: embedded);
+});

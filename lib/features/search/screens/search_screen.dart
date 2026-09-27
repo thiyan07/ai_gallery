@@ -1,12 +1,17 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../providers/search_providers.dart';
-import '../../gallery/providers/gallery_providers.dart';
-import '../../gallery/screens/photo_view_screen.dart';
-import '../../settings/screens/local_models_screen.dart';
-import '../../../../core/di/providers.dart';
-import '../widgets/search_results_grid.dart';
+import 'package:ai_gallery/core/database/app_database.dart';
+import 'package:ai_gallery/core/di/providers.dart';
+import 'package:ai_gallery/core/widgets/shimmer_grid.dart';
+import 'package:ai_gallery/features/search/screens/camera_search_screen.dart';
+import 'package:ai_gallery/features/gallery/providers/gallery_providers.dart';
+import 'package:ai_gallery/features/gallery/screens/photo_view_screen.dart';
+import 'package:ai_gallery/features/search/providers/search_providers.dart';
+import 'package:ai_gallery/features/search/widgets/search_results_grid.dart';
+import 'package:ai_gallery/features/settings/screens/local_models_screen.dart';
 
 /// Search screen with text and image search capabilities.
 class SearchScreen extends ConsumerStatefulWidget {
@@ -19,6 +24,7 @@ class SearchScreen extends ConsumerStatefulWidget {
 class _SearchScreenState extends ConsumerState<SearchScreen> {
   final TextEditingController _searchController = TextEditingController();
   final FocusNode _searchFocus = FocusNode();
+  Timer? _debounce;
   bool _showFilters = false;
 
   @override
@@ -32,6 +38,7 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
 
   @override
   void dispose() {
+    _debounce?.cancel();
     _searchController.removeListener(_onSearchChanged);
     _searchController.dispose();
     _searchFocus.dispose();
@@ -39,9 +46,13 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
   }
 
   void _onSearchChanged() {
-    ref
-        .read(searchQueryNotifierProvider.notifier)
-        .setQuery(_searchController.text);
+    _debounce?.cancel();
+    // 300ms debounce prevents firing embedding+OCR+ranking on every keystroke
+    // (major latency pain on low-tier 3GB devices).
+    _debounce = Timer(const Duration(milliseconds: 300), () {
+      if (!mounted) return;
+      ref.read(searchQueryNotifierProvider.notifier).setQuery(_searchController.text);
+    });
   }
 
   @override
@@ -76,6 +87,13 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
         ),
         actions: [
           IconButton(
+            icon: const Icon(Icons.camera_alt_outlined),
+            tooltip: 'Camera search',
+            onPressed: () => Navigator.of(context).push(
+              MaterialPageRoute(builder: (_) => const CameraSearchScreen()),
+            ),
+          ),
+          IconButton(
             icon: Icon(
               _showFilters ? Icons.filter_list : Icons.filter_list_off,
             ),
@@ -97,14 +115,19 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
             loading: () => const SizedBox.shrink(),
             error: (_, __) => const SizedBox.shrink(),
           ),
+          _buildIndexCoverageBanner(theme),
           Expanded(
             child: resultsAsync.when(
-              loading: () => const Center(child: CircularProgressIndicator()),
+              loading: () => const ShimmerGrid(columns: 3),
               error: (e, st) => _buildErrorState(context, e.toString()),
               data: (results) {
                 if (query.isEmpty) {
                   return _buildEmptySearchView(
-                    onCameraSearch: () {},
+                    onCameraSearch: () => Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (_) => const CameraSearchScreen(),
+                      ),
+                    ),
                     onVoiceSearch: () {},
                     semanticAvailable: semanticAvailableAsync.value ?? false,
                   );
@@ -405,6 +428,27 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
       );
     }
 
+    if (filters.objectTags.isNotEmpty) {
+      parsedChips.add(
+        _buildParsedFilterChip(
+          theme,
+          label: 'Contains: ${filters.objectTags.join(', ')}',
+          icon: Icons.category_outlined,
+        ),
+      );
+    }
+
+    if (filters.excludeTags.isNotEmpty) {
+      parsedChips.add(
+        _buildParsedFilterChip(
+          theme,
+          label: 'Without: ${filters.excludeTags.join(', ')}',
+          icon: Icons.block,
+          highlight: true,
+        ),
+      );
+    }
+
     if (parsedChips.isEmpty) return const SizedBox.shrink();
 
     return Container(
@@ -455,25 +499,32 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
     ThemeData theme, {
     required String label,
     required IconData icon,
+    bool highlight = false,
   }) {
+    final background =
+        highlight ? theme.colorScheme.errorContainer : theme.colorScheme.primaryContainer;
+    final foreground =
+        highlight ? theme.colorScheme.onErrorContainer : theme.colorScheme.onPrimaryContainer;
+    final border =
+        highlight ? theme.colorScheme.error : theme.colorScheme.primary;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
       decoration: BoxDecoration(
-        color: theme.colorScheme.primaryContainer,
+        color: background,
         borderRadius: BorderRadius.circular(20),
         border: Border.all(
-          color: theme.colorScheme.primary.withValues(alpha: 0.3),
+          color: border.withValues(alpha: 0.3),
         ),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(icon, size: 14, color: theme.colorScheme.onPrimaryContainer),
+          Icon(icon, size: 14, color: foreground),
           const SizedBox(width: 6),
           Text(
             label,
             style: theme.textTheme.labelSmall?.copyWith(
-              color: theme.colorScheme.onPrimaryContainer,
+              color: foreground,
             ),
           ),
         ],
@@ -500,11 +551,64 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
     );
   }
 
+  /// Banner shown when some photos lack semantic embeddings (they cannot be
+  /// found by meaning-based search until indexed). One tap starts indexing.
+  Widget _buildIndexCoverageBanner(ThemeData theme) {
+    final coverageAsync = ref.watch(indexCoverageProvider);
+    return coverageAsync.when(
+      data: (coverage) {
+        if (coverage.isComplete || coverage.totalPhotos == 0) {
+          return const SizedBox.shrink();
+        }
+        return Container(
+          width: double.infinity,
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+          decoration: BoxDecoration(
+            color: theme.colorScheme.tertiaryContainer.withValues(alpha: 0.5),
+            border: Border(
+              bottom: BorderSide(color: theme.colorScheme.outlineVariant),
+            ),
+          ),
+          child: Row(
+            children: [
+              Icon(
+                Icons.hourglass_empty,
+                size: 16,
+                color: theme.colorScheme.onTertiaryContainer,
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  '${coverage.unindexed} of ${coverage.totalPhotos} photos not indexed yet — meaning search skips them',
+                  style: theme.textTheme.labelSmall?.copyWith(
+                    color: theme.colorScheme.onTertiaryContainer,
+                  ),
+                ),
+              ),
+              TextButton(
+                onPressed: () async {
+                  final engine = await ref.read(indexingEngineProvider.future);
+                  await engine.start();
+                  ref.invalidate(indexCoverageProvider);
+                },
+                child: const Text('Index now'),
+              ),
+            ],
+          ),
+        );
+      },
+      loading: () => const SizedBox.shrink(),
+      error: (_, __) => const SizedBox.shrink(),
+    );
+  }
+
   Widget _buildResultsGrid(ThemeData theme, List<RankedSearchResult> results) {
     final gridSize = ref.watch(gridSizeProvider);
+    final query = ref.watch(searchQueryProvider);
     return SearchResultsGrid(
       results: results,
       gridSize: gridSize,
+      query: query,
       onTap: (result) => _navigateToPhotoView(context, result),
     );
   }
@@ -562,7 +666,7 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
               ),
               const SizedBox(height: 8),
               Text(
-                'Semantic search requires a local AI model. Please download the model from Settings.',
+                'This needs a local AI model. Text search still works — type to search photo text.',
                 textAlign: TextAlign.center,
                 style: TextStyle(color: theme.colorScheme.onSurfaceVariant),
               ),
@@ -623,6 +727,8 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
     final theme = Theme.of(context);
 
     if (!semanticAvailable) {
+      // Text search ran (semantic model missing) but found no matches.
+      // Say so honestly instead of implying search is unavailable.
       return Center(
         child: Padding(
           padding: const EdgeInsets.all(32),
@@ -630,20 +736,21 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
             mainAxisSize: MainAxisSize.min,
             children: [
               Icon(
-                Icons.psychology_outlined,
+                Icons.search_off,
                 size: 64,
-                color: theme.colorScheme.primary,
+                color: theme.colorScheme.onSurfaceVariant.withValues(alpha: 0.5),
               ),
               const SizedBox(height: 16),
               Text(
-                'AI Model Required',
+                'No results for "$query"',
                 style: theme.textTheme.titleLarge?.copyWith(
                   fontWeight: FontWeight.bold,
                 ),
+                textAlign: TextAlign.center,
               ),
               const SizedBox(height: 8),
               Text(
-                'Semantic search requires a local AI model. Please download the model from Settings.',
+                'Text search found no matches. Download the AI model for smarter natural-language search.',
                 textAlign: TextAlign.center,
                 style: TextStyle(color: theme.colorScheme.onSurfaceVariant),
               ),
@@ -727,7 +834,7 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
               ),
               const SizedBox(height: 8),
               Text(
-                'Download a local AI model to enable natural language photo search.',
+                'Download a local AI model to enable natural language photo search. Text search works right now — just type.',
                 textAlign: TextAlign.center,
                 style: TextStyle(color: theme.colorScheme.onSurfaceVariant),
               ),
@@ -794,9 +901,141 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
                 ),
               ],
             ),
+            const SizedBox(height: 32),
+            _SearchSuggestions(onTap: (text) {
+              _searchController.text = text;
+              _onSearchChanged();
+            }),
           ],
         ),
       ),
     );
   }
+}
+
+class _SearchSuggestions extends ConsumerWidget {
+  final void Function(String) onTap;
+
+  const _SearchSuggestions({required this.onTap});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final dbAsync = ref.watch(appDatabaseProvider);
+
+    return dbAsync.when(
+      loading: () => const SizedBox(),
+      error: (e, _) => const SizedBox(),
+      data: (db) {
+        return FutureBuilder<_SuggestionData>(
+          future: _loadSuggestions(db),
+          builder: (context, snapshot) {
+            if (!snapshot.hasData) return const SizedBox();
+            final data = snapshot.data!;
+
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                if (data.people.isNotEmpty) ...[
+                  Text(
+                    'People',
+                    style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                          fontWeight: FontWeight.bold,
+                        ),
+                  ),
+                  const SizedBox(height: 8),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: data.people.take(6).map((p) {
+                      return ActionChip(
+                        avatar: CircleAvatar(
+                          child: Text(
+                            p.isNotEmpty ? p[0].toUpperCase() : '?',
+                            style: const TextStyle(fontSize: 12),
+                          ),
+                        ),
+                        label: Text(p),
+                        onPressed: () => onTap(p),
+                      );
+                    }).toList(),
+                  ),
+                  const SizedBox(height: 20),
+                ],
+                if (data.suggestions.isNotEmpty) ...[
+                  Text(
+                    'Try searching',
+                    style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                          fontWeight: FontWeight.bold,
+                        ),
+                  ),
+                  const SizedBox(height: 8),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: data.suggestions.map((s) {
+                      return ActionChip(
+                        label: Text(s),
+                        onPressed: () => onTap(s),
+                      );
+                    }).toList(),
+                  ),
+                ],
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Future<_SuggestionData> _loadSuggestions(AppDatabase db) async {
+    final people = <String>[];
+    final suggestions = <String>[];
+
+    try {
+      // Get named people from the people table (correct table, not legacy face_detections)
+      final peopleRows = await db.database.rawQuery(
+        'SELECT display_name FROM people '
+        'WHERE display_name IS NOT NULL AND display_name != "" '
+        'AND status = "active" '
+        'ORDER BY display_name COLLATE NOCASE ASC LIMIT 10',
+      );
+      people.addAll(peopleRows.map((r) => r['display_name'] as String));
+
+      // Fallback: also check faces.label for legacy data
+      if (people.isEmpty) {
+        final faceRows = await db.database.rawQuery(
+          'SELECT DISTINCT label FROM faces '
+          'WHERE label IS NOT NULL AND label != "" '
+          'AND label NOT LIKE "Unknown%" '
+          'LIMIT 10',
+        );
+        people.addAll(faceRows.map((r) => r['label'] as String));
+      }
+
+      // Get common object labels (correct table: object_tags)
+      final objectRows = await db.database.rawQuery(
+        'SELECT label, COUNT(*) as cnt FROM object_tags '
+        'WHERE label IS NOT NULL AND label != "" '
+        'GROUP BY label ORDER BY cnt DESC LIMIT 8',
+      );
+      for (final row in objectRows) {
+        suggestions.add(row['label'] as String);
+      }
+
+      // Add time-based suggestions
+      suggestions.addAll(['recent photos', 'favorites', 'videos']);
+    } catch (_) {
+      // Silently fail
+    }
+
+    return _SuggestionData(people: people, suggestions: suggestions);
+  }
+}
+
+class _SuggestionData {
+  final List<String> people;
+  final List<String> suggestions;
+
+  const _SuggestionData({required this.people, required this.suggestions});
 }

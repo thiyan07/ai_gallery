@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:sqflite/sqflite.dart';
@@ -191,6 +192,8 @@ class IndexingScreen extends ConsumerWidget {
         return 'Scanning gallery';
       case IndexingPhase.extractingMetadata:
         return 'Extracting metadata';
+      case IndexingPhase.analyzingContent:
+        return 'Analyzing videos';
       case IndexingPhase.generatingThumbnails:
         return 'Generating thumbnails';
       case IndexingPhase.analyzingColors:
@@ -205,8 +208,12 @@ class IndexingScreen extends ConsumerWidget {
         return 'Running OCR';
       case IndexingPhase.detectingObjects:
         return 'Detecting objects';
+      case IndexingPhase.embeddingRegions:
+        return 'Embedding object regions';
       case IndexingPhase.detectingFaces:
         return 'Detecting faces';
+      case IndexingPhase.buildingGraph:
+        return 'Building knowledge graph';
       case IndexingPhase.complete:
         return 'Complete';
     }
@@ -322,6 +329,20 @@ class _JobStatusSection extends ConsumerWidget {
         return 'Captions';
       case AIJobType.faceEmbedding:
         return 'Face Embeddings';
+      case AIJobType.videoAnalysis:
+        return 'Video Analysis';
+      case AIJobType.videoFrameExtraction:
+        return 'Frame Extraction';
+      case AIJobType.videoFrameOcr:
+        return 'Video OCR';
+      case AIJobType.videoFrameFaceDetection:
+        return 'Video Face Detection';
+      case AIJobType.videoFrameObjectDetection:
+        return 'Video Object Detection';
+      case AIJobType.videoEmbedding:
+        return 'Video Embeddings';
+      case AIJobType.regionEmbedding:
+        return 'Region Embeddings';
     }
   }
 }
@@ -433,37 +454,49 @@ class _StatisticsSection extends ConsumerWidget {
       results['embeddings'] = Sqflite.firstIntValue(
         await database.database.rawQuery('SELECT COUNT(*) FROM embeddings'),
       ) ?? 0;
-    } catch (_) {}
+    } catch (e) {
+      if (kDebugMode) debugPrint('[IndexingScreen] Failed to count embeddings: $e');
+    }
 
     try {
       results['faces'] = Sqflite.firstIntValue(
         await database.database.rawQuery('SELECT COUNT(*) FROM faces'),
       ) ?? 0;
-    } catch (_) {}
+    } catch (e) {
+      if (kDebugMode) debugPrint('[IndexingScreen] Failed to count faces: $e');
+    }
 
     try {
       results['objects'] = Sqflite.firstIntValue(
         await database.database.rawQuery('SELECT COUNT(*) FROM object_tags'),
       ) ?? 0;
-    } catch (_) {}
+    } catch (e) {
+      if (kDebugMode) debugPrint('[IndexingScreen] Failed to count object_tags: $e');
+    }
 
     try {
       results['ocr'] = Sqflite.firstIntValue(
         await database.database.rawQuery('SELECT COUNT(*) FROM ocr_text'),
       ) ?? 0;
-    } catch (_) {}
+    } catch (e) {
+      if (kDebugMode) debugPrint('[IndexingScreen] Failed to count ocr_text: $e');
+    }
 
     try {
       results['favorites'] = Sqflite.firstIntValue(
         await database.database.rawQuery('SELECT COUNT(*) FROM favorites'),
       ) ?? 0;
-    } catch (_) {}
+    } catch (e) {
+      if (kDebugMode) debugPrint('[IndexingScreen] Failed to count favorites: $e');
+    }
 
     try {
       results['photos'] = Sqflite.firstIntValue(
         await database.database.rawQuery('SELECT COUNT(*) FROM photo_metadata'),
       ) ?? 0;
-    } catch (_) {}
+    } catch (e) {
+      if (kDebugMode) debugPrint('[IndexingScreen] Failed to count photo_metadata: $e');
+    }
 
     return results;
   }

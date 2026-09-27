@@ -1,11 +1,15 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:photo_manager/photo_manager.dart';
+import 'package:photo_manager_image_provider/photo_manager_image_provider.dart';
 
-import '../providers/search_providers.dart';
-import '../../gallery/providers/gallery_providers.dart';
-import '../../../../core/di/providers.dart';
-import 'search_result_tile.dart';
+import 'package:ai_gallery/core/di/providers.dart' hide searchServiceProvider;
+import 'package:ai_gallery/core/utils/thumbnail_utils.dart';
+import 'package:ai_gallery/features/gallery/providers/gallery_providers.dart';
+import 'package:ai_gallery/features/search/providers/search_providers.dart';
+import 'package:ai_gallery/features/search/screens/similar_photos_screen.dart';
+import 'package:ai_gallery/features/search/widgets/search_result_tile.dart';
 
 /// Grid of search results with pinch-to-zoom support.
 class SearchResultsGrid extends ConsumerStatefulWidget {
@@ -13,11 +17,16 @@ class SearchResultsGrid extends ConsumerStatefulWidget {
   final int gridSize;
   final void Function(RankedSearchResult) onTap;
 
+  /// Current query text — used for relevance feedback ("not relevant").
+  /// Empty disables feedback actions.
+  final String query;
+
   const SearchResultsGrid({
     super.key,
     required this.results,
     required this.gridSize,
     required this.onTap,
+    this.query = '',
   });
 
   @override
@@ -187,10 +196,74 @@ class _SearchResultsGridState extends ConsumerState<SearchResultsGrid>
     _overlayAnimationController.reverse();
   }
 
+  /// Long-press menu: find similar photos, or mark not relevant for the query.
+  Future<void> _showResultMenu(
+    BuildContext context,
+    RankedSearchResult result,
+  ) async {
+    HapticFeedback.mediumImpact();
+    final query = widget.query;
+    await showModalBottomSheet<void>(
+      context: context,
+      builder: (sheetContext) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.photo_library_outlined),
+              title: const Text('Find similar photos'),
+              onTap: () {
+                Navigator.of(sheetContext).pop();
+                Navigator.of(context).push(
+                  MaterialPageRoute(
+                    builder: (_) => SimilarPhotosScreen(
+                      photoId: result.photoId,
+                      query: query,
+                    ),
+                  ),
+                );
+              },
+            ),
+            if (query.trim().isNotEmpty)
+              ListTile(
+                leading: const Icon(Icons.thumb_down_outlined),
+                title: const Text('Not relevant for this search'),
+                onTap: () async {
+                  Navigator.of(sheetContext).pop();
+                  final service = ref.read(searchServiceProvider);
+                  await service.markNotRelevant(result.photoId, query);
+                  ref.invalidate(searchResultsProvider);
+                  if (context.mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: const Text('Hidden from this search'),
+                        action: SnackBarAction(
+                          label: 'Undo',
+                          onPressed: () async {
+                            await service.clearNotRelevant(
+                              result.photoId,
+                              query,
+                            );
+                            ref.invalidate(searchResultsProvider);
+                          },
+                        ),
+                      ),
+                    );
+                  }
+                },
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final results = widget.results;
     final currentGridSize = _gridSizes[_currentGridSizeIndex];
+    // Decode thumbnails at the actual tile size × DPR.
+    final thumbnailSize = ThumbnailSizes.forGrid(context, currentGridSize);
 
     return GestureDetector(
       onScaleStart: _handleScaleStart,
@@ -200,10 +273,17 @@ class _SearchResultsGridState extends ConsumerState<SearchResultsGrid>
         children: [
           RefreshIndicator(
             onRefresh: () async {
-              await Future<void>.delayed(const Duration(milliseconds: 300));
+              ref.invalidate(searchResultsProvider);
+              try {
+                await ref.read(searchResultsProvider.future);
+              } catch (_) {
+                // Errors surface through the provider's AsyncValue UI.
+              }
             },
             child: GridView.builder(
               padding: const EdgeInsets.all(8),
+              // Keep nearby rows alive so flings don't re-decode tiles.
+              cacheExtent: 800,
               gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
                 crossAxisCount: currentGridSize,
                 crossAxisSpacing: 4,
@@ -213,11 +293,15 @@ class _SearchResultsGridState extends ConsumerState<SearchResultsGrid>
               itemBuilder: (context, index) {
                 final result = results[index];
                 final asset = _assetEntities[result.photoId];
-                return AnimatedSearchResultTile(
-                  result: result,
-                  gridSize: currentGridSize,
-                  onTap: () => widget.onTap(result),
-                  asset: asset,
+                return RepaintBoundary(
+                  child: AnimatedSearchResultTile(
+                    result: result,
+                    gridSize: currentGridSize,
+                    onTap: () => widget.onTap(result),
+                    onLongPress: () => _showResultMenu(context, result),
+                    thumbnailSize: thumbnailSize,
+                    asset: asset,
+                  ),
                 );
               },
             ),
@@ -309,6 +393,10 @@ class AnimatedSearchResultTile extends StatefulWidget {
   final RankedSearchResult result;
   final int gridSize;
   final VoidCallback onTap;
+  final VoidCallback? onLongPress;
+
+  /// Decoded thumbnail resolution, forwarded to [SearchResultTile].
+  final ThumbnailSize thumbnailSize;
   final AssetEntity? asset;
 
   const AnimatedSearchResultTile({
@@ -316,6 +404,8 @@ class AnimatedSearchResultTile extends StatefulWidget {
     required this.result,
     required this.gridSize,
     required this.onTap,
+    this.onLongPress,
+    this.thumbnailSize = const ThumbnailSize.square(300),
     this.asset,
   });
 
@@ -372,6 +462,8 @@ class _AnimatedSearchResultTileState extends State<AnimatedSearchResultTile>
         child: SearchResultTile(
           result: widget.result,
           onTap: widget.onTap,
+          onLongPress: widget.onLongPress,
+          thumbnailSize: widget.thumbnailSize,
           asset: widget.asset,
         ),
       ),

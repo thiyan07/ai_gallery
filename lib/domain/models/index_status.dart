@@ -2,6 +2,7 @@
 enum IndexingPhase {
   scanning,
   extractingMetadata,
+  analyzingContent,
   generatingThumbnails,
   analyzingColors,
   detectingBlur,
@@ -9,7 +10,9 @@ enum IndexingPhase {
   generatingEmbeddings,
   ocr,
   detectingObjects,
+  embeddingRegions,
   detectingFaces,
+  buildingGraph,
   complete,
 }
 

@@ -54,4 +54,32 @@ class EmbeddingDao {
     final result = await _db.rawQuery('SELECT COUNT(*) as count FROM $tableName');
     return Sqflite.firstIntValue(result) ?? 0;
   }
+
+  /// Get per-region embeddings for a photo.
+  Future<List<EmbeddingRecord>> getRegionEmbeddingsByPhotoId(String photoId) async {
+    final rows = await _db.query(
+      tableName,
+      where: 'photo_id = ? AND region_label IS NOT NULL',
+      whereArgs: [photoId],
+    );
+    return rows.map(EmbeddingRecord.fromMap).toList();
+  }
+
+  /// Count per-region embeddings for a photo.
+  Future<int> countRegionsByPhotoId(String photoId) async {
+    final result = await _db.rawQuery(
+      'SELECT COUNT(*) as count FROM $tableName WHERE photo_id = ? AND region_label IS NOT NULL',
+      [photoId],
+    );
+    return Sqflite.firstIntValue(result) ?? 0;
+  }
+
+  /// Delete per-region embeddings for a photo (keeps the global row).
+  Future<void> deleteRegionsByPhotoId(String photoId) async {
+    await _db.delete(
+      tableName,
+      where: 'photo_id = ? AND region_label IS NOT NULL',
+      whereArgs: [photoId],
+    );
+  }
 }
