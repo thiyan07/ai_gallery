@@ -57,8 +57,10 @@ class DevicePhotoRepository implements PhotoRepository {
     required AssetPathEntity album,
     int page = 0,
     int pageSize = 80,
+    bool ascending = false,
   }) {
-    return _dataSource.getPhotos(album, page: page, pageSize: pageSize);
+    return _dataSource.getPhotos(album,
+        page: page, pageSize: pageSize, ascending: ascending);
   }
 
   @override

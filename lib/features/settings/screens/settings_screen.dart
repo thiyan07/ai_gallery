@@ -8,6 +8,11 @@ import '../../indexing/screens/indexing_screen.dart';
 import '../screens/api_keys_screen.dart';
 import '../screens/local_models_screen.dart';
 import '../screens/storage_insights_screen.dart';
+import '../screens/library_stats_screen.dart';
+import '../../gallery/screens/trash_screen.dart';
+import '../../gallery/screens/cleanup_screen.dart';
+import '../../gallery/screens/archived_screen.dart';
+import '../../gallery/screens/hidden_screen.dart';
 import '../providers/settings_providers.dart';
 import '../../../core/di/providers.dart';
 
@@ -460,6 +465,71 @@ class SettingsScreen extends ConsumerWidget {
             title: const Text('Storage Location'),
             subtitle: const Text('/home/thiyan/projects/ai_gallery/data'),
             leading: const Icon(Icons.folder_open_outlined),
+          ),
+          ListTile(
+            title: const Text('Trash'),
+            subtitle: const Text('Restore or permanently delete photos (30-day retention)'),
+            leading: const Icon(Icons.delete_outline),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () {
+              Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (_) => const TrashScreen(),
+                ),
+              );
+            },
+          ),
+          ListTile(
+            title: const Text('Library stats'),
+            subtitle: const Text('Photos, people, objects, and AI index coverage'),
+            leading: const Icon(Icons.bar_chart_outlined),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () {
+              Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (_) => const LibraryStatsScreen(),
+                ),
+              );
+            },
+          ),
+          ListTile(
+            title: const Text('Clean up'),
+            subtitle: const Text('Duplicates, blurry shots, and large files'),
+            leading: const Icon(Icons.cleaning_services_outlined),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () {
+              Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (_) => const CleanupScreen(),
+                ),
+              );
+            },
+          ),
+          ListTile(
+            title: const Text('Archived'),
+            subtitle: const Text('Hidden from timeline, still in search'),
+            leading: const Icon(Icons.archive_outlined),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () {
+              Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (_) => const ArchivedScreen(),
+                ),
+              );
+            },
+          ),
+          ListTile(
+            title: const Text('Hidden'),
+            subtitle: const Text('PIN-protected private photos'),
+            leading: const Icon(Icons.visibility_off_outlined),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () {
+              Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (_) => const HiddenScreen(),
+                ),
+              );
+            },
           ),
 
           const Divider(height: 32),

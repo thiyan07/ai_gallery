@@ -10,6 +10,7 @@ class SecureStorageService {
   static const String _keyOpenAI = 'openai_api_key';
   static const String _keyGoogleVision = 'google_vision_api_key';
   static const String _keyAnthropic = 'anthropic_api_key';
+  static const String _keyHiddenPin = 'hidden_album_pin';
 
   // OpenAI Key
   Future<String?> getOpenAIKey() => _secureStorage.read(key: _keyOpenAI);
@@ -28,4 +29,14 @@ class SecureStorageService {
 
   // General helpers
   Future<void> clearAllKeys() => _secureStorage.deleteAll();
+
+  // Hidden album PIN (4+ digits, stored in encrypted storage)
+  Future<String?> getHiddenPin() => _secureStorage.read(key: _keyHiddenPin);
+  Future<void> setHiddenPin(String pin) =>
+      _secureStorage.write(key: _keyHiddenPin, value: pin);
+  Future<void> deleteHiddenPin() => _secureStorage.delete(key: _keyHiddenPin);
+  Future<bool> hasHiddenPin() async =>
+      (await getHiddenPin())?.isNotEmpty ?? false;
+  Future<bool> verifyHiddenPin(String pin) async =>
+      (await getHiddenPin()) == pin;
 }

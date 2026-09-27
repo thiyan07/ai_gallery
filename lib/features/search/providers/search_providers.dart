@@ -3,6 +3,7 @@ import 'dart:typed_data';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:ai_gallery/ai/providers/embedding_provider.dart';
+import 'package:ai_gallery/core/database/daos/visibility_dao.dart';
 import 'package:ai_gallery/core/di/providers.dart';
 import 'package:ai_gallery/domain/models/face_detection.dart';
 import 'package:ai_gallery/features/search/services/search_service.dart';
@@ -228,7 +229,19 @@ final searchResultsProvider = FutureProvider<List<RankedSearchResult>>((ref) asy
       final searchService = ref.watch(searchServiceProvider);
       // Use the new searchParsed method that handles semantic query + filters + ranking
       final updatedParsedQuery = parsedQuery.copyWith(filters: combinedFilters);
-      return searchService.searchParsed(updatedParsedQuery, limit: 20);
+      final results =
+          await searchService.searchParsed(updatedParsedQuery, limit: 20);
+      // Hidden photos are excluded from search everywhere (archived photos
+      // stay searchable by design).
+      try {
+        final db = ref.watch(appDatabaseProvider).requireValue;
+        final hidden =
+            await db.visibility.idsInMode(VisibilityMode.hidden);
+        if (hidden.isEmpty) return results;
+        return results.where((r) => !hidden.contains(r.photoId)).toList();
+      } catch (_) {
+        return results;
+      }
     },
     loading: () => [],
     error: (e, st) {

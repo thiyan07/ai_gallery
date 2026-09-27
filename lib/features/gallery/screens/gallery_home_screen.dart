@@ -198,7 +198,19 @@ class _PhotosTabState extends ConsumerState<_PhotosTab>
             ),
           ] else ...[
             GridSizeButton(gridSize: gridSize),
-            IconButton(
+            Consumer(
+              builder: (context, ref, _) {
+                final oldestFirst = ref.watch(photoSortAscendingProvider);
+                return IconButton(
+                  icon: Icon(oldestFirst
+                      ? Icons.arrow_upward
+                      : Icons.arrow_downward),
+                  tooltip: oldestFirst ? 'Oldest first' : 'Newest first',
+                  onPressed: () =>
+                      ref.read(photoSortAscendingProvider.notifier).toggle(),
+                );
+              },
+            ),            IconButton(
               key: const Key('photos_search_button'),
               icon: const Icon(Icons.search),
               tooltip: 'Search',

@@ -75,13 +75,14 @@ class DeviceMediaDataSource {
     AssetPathEntity album, {
     int page = 0,
     int pageSize = 80,
+    bool ascending = false,
   }) async {
-    // Sort by creation date descending (most recent first)
+    // Sort by creation date; direction is user-configurable (Aves-style).
     final filterOption = FilterOptionGroup(
       orders: [
         OrderOption(
           type: OrderOptionType.createDate,
-          asc: false,
+          asc: ascending,
         ),
       ],
     );

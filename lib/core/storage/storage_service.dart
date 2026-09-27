@@ -55,6 +55,12 @@ class StorageService {
   int getGridSize() => _prefs.getInt(_keyGridSize) ?? 3;
   Future<bool> setGridSize(int value) => _prefs.setInt(_keyGridSize, value);
 
+  // Gallery sort: true = oldest first, false = newest first (default)
+  static const String _keySortAscending = 'gallery_sort_ascending';
+  bool isSortAscending() => _prefs.getBool(_keySortAscending) ?? false;
+  Future<bool> setSortAscending(bool value) =>
+      _prefs.setBool(_keySortAscending, value);
+
   // Helper method to clear all preferences (for debugging or settings reset)
   Future<bool> clearAll() => _prefs.clear();
 }

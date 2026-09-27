@@ -34,6 +34,7 @@ abstract class PhotoRepository {
     required AssetPathEntity album,
     int page = 0,
     int pageSize = 80,
+    bool ascending = false,
   });
 
   /// Resolves an album entity by id.

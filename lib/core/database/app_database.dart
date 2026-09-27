@@ -22,6 +22,8 @@ import 'daos/people_dao.dart';
 import 'daos/memory_dao.dart';
 import 'daos/edit_dao.dart';
 import 'daos/search_feedback_dao.dart';
+import 'daos/trash_dao.dart';
+import 'daos/visibility_dao.dart';
 import 'daos/smart_album_dao.dart';
 import 'daos/video_segment_dao.dart';
 import 'daos/video_analysis_dao.dart';
@@ -34,7 +36,7 @@ class AppDatabase {
 
   static AppDatabase? _instance;
   static const _dbName = 'ai_gallery.db';
-  static const _dbVersion = 17;
+  static const _dbVersion = 19;
 
   final Database _db;
 
@@ -49,6 +51,8 @@ class AppDatabase {
   late final OcrDao ocrResults = OcrDao(_db);
   late final EmbeddingDao embeddings = EmbeddingDao(_db);
   late final SearchFeedbackDao searchFeedback = SearchFeedbackDao(_db);
+  late final TrashDao trash = TrashDao(_db);
+  late final VisibilityDao visibility = VisibilityDao(_db);
   late final PeopleDao peopleDao = PeopleDao(_db);
   late final MemoryDao memories = MemoryDao(_db);
   late final EditDao editRecipes = EditDao(_db);
@@ -186,6 +190,15 @@ class AppDatabase {
     if (version >= 14) {
       // priority column already present in the fresh ai_jobs table definition
     }
+    if (version >= 17) {
+      await _createSearchFeedbackTable(db);
+    }
+    if (version >= 18) {
+      await _createTrashTable(db);
+    }
+    if (version >= 19) {
+      await _createVisibilityTable(db);
+    }
     // --- Indexes must be created AFTER all tables exist (fresh-create ordering) ---
     if (version >= 7) {
       await _createSearchIndexes(db);
@@ -290,6 +303,17 @@ class AppDatabase {
       await _addColumnIfMissing(db, 'embeddings', 'region_bbox_height', 'REAL');
       await _createSearchFeedbackTable(db);
       await db.execute('CREATE INDEX IF NOT EXISTS idx_embeddings_region ON embeddings(photo_id, region_label)');
+    }
+    if (oldVersion < 18) {
+      // Recycle bin: soft-deleted assets with 30-day retention.
+      await _createTrashTable(db);
+      // Repair: v17 fresh installs never created search_feedback
+      // (_onCreate lacked the v17 block until v18), so ensure it here.
+      await _createSearchFeedbackTable(db);
+    }
+    if (oldVersion < 19) {
+      // Archive + Hidden visibility modes (Ente-style organization).
+      await _createVisibilityTable(db);
     }
   }
 
@@ -470,6 +494,29 @@ class AppDatabase {
         liked INTEGER NOT NULL DEFAULT 0,
         created_at TEXT NOT NULL,
         PRIMARY KEY (photo_id, query)
+      )
+    ''');
+  }
+
+  /// Recycle bin: soft-deleted assets kept for 30 days before permanent
+  /// deletion. Trashed assets stay in MediaStore but are hidden from grids.
+  static Future<void> _createTrashTable(Database db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS trash (
+        asset_id TEXT PRIMARY KEY,
+        media_type TEXT,
+        deleted_at TEXT NOT NULL
+      )
+    ''');
+  }
+
+  /// Visibility modes: 'archived' (decluttered from timeline, still
+  /// searchable) vs 'hidden' (excluded everywhere, PIN-gated to view).
+  static Future<void> _createVisibilityTable(Database db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS visibility (
+        photo_id TEXT PRIMARY KEY,
+        mode TEXT NOT NULL
       )
     ''');
   }

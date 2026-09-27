@@ -291,6 +291,37 @@ class PhotoTile extends ConsumerWidget {
               },
             ),
             ListTile(
+              leading: const Icon(Icons.archive_outlined),
+              title: const Text('Archive'),
+              subtitle: const Text('Hide from timeline, keep in search'),
+              onTap: () async {
+                Navigator.pop(sheetContext);
+                await ref.read(visibilityServiceProvider).archive(asset.id);
+                ref.invalidate(photoListProvider);
+                if (scaffoldContext.mounted) {
+                  ScaffoldMessenger.of(scaffoldContext).showSnackBar(
+                    const SnackBar(content: Text('Archived')),
+                  );
+                }
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.visibility_off_outlined),
+              title: const Text('Hide'),
+              subtitle: const Text('PIN-protected hidden section'),
+              onTap: () async {
+                Navigator.pop(sheetContext);
+                await ref.read(visibilityServiceProvider).hide(asset.id);
+                ref.invalidate(photoListProvider);
+                ref.invalidate(albumListProvider);
+                if (scaffoldContext.mounted) {
+                  ScaffoldMessenger.of(scaffoldContext).showSnackBar(
+                    const SnackBar(content: Text('Moved to Hidden')),
+                  );
+                }
+              },
+            ),
+            ListTile(
               leading: const Icon(Icons.edit_outlined),
               title: const Text('Edit'),
               enabled: asset.type != AssetType.video,
@@ -322,51 +353,44 @@ class PhotoTile extends ConsumerWidget {
             ),
             ListTile(
               leading: Icon(Icons.delete_outline, color: Theme.of(sheetContext).colorScheme.error),
-              title: Text('Delete', style: TextStyle(color: Theme.of(sheetContext).colorScheme.error)),
+              title: Text('Move to trash', style: TextStyle(color: Theme.of(sheetContext).colorScheme.error)),
               onTap: () async {
                 Navigator.pop(sheetContext);
                 final confirmed = await showDialog<bool>(
                   context: scaffoldContext,
                   builder: (ctx) => AlertDialog(
-                    title: const Text('Delete photo?'),
-                    content: const Text('This will permanently delete the photo from your device.'),
+                    title: const Text('Move to trash?'),
+                    content: const Text('The photo stays recoverable in trash for 30 days.'),
                     actions: [
                       TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
                       FilledButton(
                         style: FilledButton.styleFrom(backgroundColor: Theme.of(ctx).colorScheme.error),
                         onPressed: () => Navigator.pop(ctx, true),
-                        child: const Text('Delete'),
+                        child: const Text('Move to trash'),
                       ),
                     ],
                   ),
                 );
                 if (confirmed != true) return;
-                final deleted = await MediaService.deleteAssets([asset.id]);
-                if (deleted > 0) {
-                  try {
-                    final db = await ref.read(appDatabaseProvider.future);
-                    await db.database.delete('photo_metadata', where: 'photo_id = ?', whereArgs: [asset.id]);
-                    await db.database.delete('embeddings', where: 'photo_id = ?', whereArgs: [asset.id]);
-                    await db.database.delete('faces', where: 'photo_id = ?', whereArgs: [asset.id]);
-                    await db.database.delete('object_tags', where: 'photo_id = ?', whereArgs: [asset.id]);
-                    await db.database.delete('ocr_text', where: 'photo_id = ?', whereArgs: [asset.id]);
-                    await db.database.delete('favorites', where: 'asset_id = ?', whereArgs: [asset.id]);
-                    await db.database.delete('edit_recipes', where: 'photo_id = ?', whereArgs: [asset.id]);
-                    await db.database.delete('analysis_state', where: 'photo_id = ?', whereArgs: [asset.id]);
-                  } catch (_) {}
-                  ref.invalidate(photoListProvider);
-                  ref.invalidate(albumListProvider);
-                }
+                final trash = ref.read(trashServiceProvider);
+                await trash.moveToTrash([asset.id],
+                    mediaType: asset.type == AssetType.video ? 'video' : 'image');
+                ref.invalidate(photoListProvider);
+                ref.invalidate(albumListProvider);
                 if (!scaffoldContext.mounted) return;
-                if (deleted > 0) {
-                  ScaffoldMessenger.of(scaffoldContext).showSnackBar(
-                    const SnackBar(content: Text('Photo deleted')),
-                  );
-                } else {
-                  ScaffoldMessenger.of(scaffoldContext).showSnackBar(
-                    const SnackBar(content: Text('Failed to delete photo')),
-                  );
-                }
+                ScaffoldMessenger.of(scaffoldContext).showSnackBar(
+                  SnackBar(
+                    content: const Text('Moved to trash (30 days to restore)'),
+                    action: SnackBarAction(
+                      label: 'Undo',
+                      onPressed: () async {
+                        await trash.restore([asset.id]);
+                        ref.invalidate(photoListProvider);
+                        ref.invalidate(albumListProvider);
+                      },
+                    ),
+                  ),
+                );
               },
             ),
             ListTile(

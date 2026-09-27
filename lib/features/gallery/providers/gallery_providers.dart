@@ -4,6 +4,45 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:photo_manager/photo_manager.dart';
 import '../../../core/di/providers.dart';
 import '../../../domain/repositories/photo_repository.dart';
+import '../services/trash_service.dart';
+import '../services/visibility_service.dart';
+
+/// Recycle bin flows (trash/restore/permanent-delete/purge).
+final trashServiceProvider = Provider<TrashService>((ref) {
+  final db = ref.watch(appDatabaseProvider).requireValue;
+  return TrashService(database: db);
+});
+
+/// Archive + Hidden visibility flows.
+final visibilityServiceProvider = Provider<VisibilityService>((ref) {
+  final db = ref.watch(appDatabaseProvider).requireValue;
+  final secure = ref.watch(secureStorageServiceProvider);
+  return VisibilityService(database: db, secureStorage: secure);
+});
+
+// ─────────────────────────────────────────────
+// Gallery sort order (newest/oldest first)
+// ─────────────────────────────────────────────
+
+/// True = oldest first, false = newest first. Persisted, applied
+/// server-side via MediaStore ordering (correct with pagination).
+final photoSortAscendingProvider =
+    NotifierProvider<PhotoSortNotifier, bool>(PhotoSortNotifier.new);
+
+class PhotoSortNotifier extends Notifier<bool> {
+  @override
+  bool build() {
+    final storage = ref.watch(storageServiceProvider);
+    return storage.isSortAscending();
+  }
+
+  void setAscending(bool ascending) {
+    state = ascending;
+    ref.read(storageServiceProvider).setSortAscending(ascending);
+  }
+
+  void toggle() => setAscending(!state);
+}
 
 // ─────────────────────────────────────────────
 // Permission
@@ -159,6 +198,8 @@ class PhotoListNotifier extends AsyncNotifier<List<AssetEntity>> {
     // Watch selected album and album list - changes to either will rebuild this provider
     final selectedAlbumId = ref.watch(selectedAlbumProvider);
     final albums = await ref.watch(albumListProvider.future);
+    // Re-sort when the user toggles newest/oldest.
+    final ascending = ref.watch(photoSortAscendingProvider);
 
     if (albums.isEmpty) {
       return [];
@@ -178,10 +219,11 @@ class PhotoListNotifier extends AsyncNotifier<List<AssetEntity>> {
     final photos = await _repo.getPhotoEntities(
       album: selectedAlbum,
       pageSize: _pageSize,
+      ascending: ascending,
     );
 
     _log('Loaded ${photos.length} photos from album');
-    return photos;
+    return _withoutTrashed(photos);
   }
 
   void _log(String message, {bool isError = false}) {
@@ -217,15 +259,16 @@ class PhotoListNotifier extends AsyncNotifier<List<AssetEntity>> {
       }
 
       final more =
-          await repository.getPhotoEntities(album: album, page: _nextPage, pageSize: _pageSize);
+          await repository.getPhotoEntities(album: album, page: _nextPage, pageSize: _pageSize, ascending: ref.read(photoSortAscendingProvider));
       _nextPage++;
       _log('Loaded ${more.length} more photos (page $_nextPage)');
       final List<AssetEntity> combined = [...?state.value, ...more];
       // Trim oldest entries if list exceeds max to prevent OOM
-      if (combined.length > _maxInMemory) {
-        state = AsyncData(combined.sublist(combined.length - _maxInMemory));
+      final visible = await _withoutTrashed(combined);
+      if (visible.length > _maxInMemory) {
+        state = AsyncData(visible.sublist(visible.length - _maxInMemory));
       } else {
-        state = AsyncData(combined);
+        state = AsyncData(visible);
       }
     } catch (e, stackTrace) {
       _log('Error loading more photos: $e', isError: true);
@@ -237,6 +280,29 @@ class PhotoListNotifier extends AsyncNotifier<List<AssetEntity>> {
   Future<void> refresh() async {
     _nextPage = 1; // Reset to page 1 on refresh
     ref.invalidateSelf();
+  }
+
+  /// Remove trashed, archived, and hidden assets (recycle bin, Archive,
+  /// and Hidden sections hide them from the timeline grid).
+  Future<List<AssetEntity>> _withoutTrashed(List<AssetEntity> assets) async {
+    if (assets.isEmpty) return assets;
+    try {
+      final trashed = await ref.read(trashServiceProvider).trashedIds();
+      final visibility = ref.read(visibilityServiceProvider);
+      final archived = await visibility.archivedIds();
+      final hidden = await visibility.hiddenIds();
+      if (trashed.isEmpty && archived.isEmpty && hidden.isEmpty) {
+        return assets;
+      }
+      return assets
+          .where((a) =>
+              !trashed.contains(a.id) &&
+              !archived.contains(a.id) &&
+              !hidden.contains(a.id))
+          .toList();
+    } catch (_) {
+      return assets;
+    }
   }
 }
 
