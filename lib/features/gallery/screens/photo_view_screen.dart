@@ -4,7 +4,11 @@ import 'package:photo_manager/photo_manager.dart';
 import 'package:photo_manager_image_provider/photo_manager_image_provider.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:ai_gallery/features/search/providers/search_providers.dart';
+import '../../../core/di/providers.dart' as di_providers;
 import '../providers/favorites_provider.dart';
+import '../providers/gallery_providers.dart';
+import '../services/media_service.dart';
+import '../../editing/screens/edit_screen.dart';
 
 /// Full-screen photo viewer with swipe navigation, zoom, and action bar.
 class PhotoViewScreen extends ConsumerStatefulWidget {
@@ -31,6 +35,10 @@ class _PhotoViewScreenState extends ConsumerState<PhotoViewScreen> {
     super.initState();
     _currentIndex = widget.initialIndex;
     _pageController = PageController(initialPage: widget.initialIndex);
+    // Warm the neighbors so the first swipe doesn't hitch on decode.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _precacheNeighbors(_currentIndex);
+    });
   }
 
   @override
@@ -41,12 +49,89 @@ class _PhotoViewScreenState extends ConsumerState<PhotoViewScreen> {
 
   AssetEntity get _current => widget.assets[_currentIndex];
 
+  /// Pre-decode the previous/next full photos so swiping never waits on IO.
+  void _precacheNeighbors(int index) {
+    for (final neighbor in [index - 1, index + 1]) {
+      if (neighbor < 0 || neighbor >= widget.assets.length) continue;
+      final asset = widget.assets[neighbor];
+      // Precaching must not crash the viewer if the asset is unreadable.
+      precacheImage(
+        AssetEntityImageProvider(asset, isOriginal: true),
+        context,
+      ).ignore();
+    }
+  }
+
   void _toggleBars() => setState(() => _showBars = !_showBars);
 
   Future<void> _share() async {
     final file = await _current.file;
     if (file != null) {
       await Share.shareXFiles([XFile(file.path)]);
+    }
+  }
+
+  void _openEditor(BuildContext context) {
+    if (_current.type == AssetType.video) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Editing is available for photos only')),
+      );
+      return;
+    }
+    Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => EditScreen(photoId: _current.id)),
+    );
+  }
+
+  Future<void> _confirmDelete(BuildContext context) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Delete photo?'),
+        content: const Text(
+          'This will permanently delete the photo from your device. This action cannot be undone.',
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: Theme.of(ctx).colorScheme.error),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    final deleted = await MediaService.deleteAssets([_current.id]);
+    if (deleted > 0) {
+      try {
+        final db = await ref.read(di_providers.appDatabaseProvider.future);
+        await db.database.delete('photo_metadata', where: 'photo_id = ?', whereArgs: [_current.id]);
+        await db.database.delete('embeddings', where: 'photo_id = ?', whereArgs: [_current.id]);
+        await db.database.delete('faces', where: 'photo_id = ?', whereArgs: [_current.id]);
+        await db.database.delete('object_tags', where: 'photo_id = ?', whereArgs: [_current.id]);
+        await db.database.delete('ocr_text', where: 'photo_id = ?', whereArgs: [_current.id]);
+        await db.database.delete('favorites', where: 'asset_id = ?', whereArgs: [_current.id]);
+        await db.database.delete('edit_recipes', where: 'photo_id = ?', whereArgs: [_current.id]);
+        await db.database.delete('analysis_state', where: 'photo_id = ?', whereArgs: [_current.id]);
+      } catch (_) {}
+      ref.invalidate(photoListProvider);
+      ref.invalidate(albumListProvider);
+    }
+    if (!context.mounted) return;
+    if (deleted > 0) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Photo deleted')),
+      );
+      if (widget.assets.length <= 1) {
+        Navigator.of(context).pop();
+      } else {
+        if (mounted) Navigator.of(context).pop();
+      }
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Failed to delete photo')),
+      );
     }
   }
 
@@ -77,6 +162,11 @@ class _PhotoViewScreenState extends ConsumerState<PhotoViewScreen> {
                       ref.read(favoritesProvider.notifier).toggle(_current.id),
                 ),
                 IconButton(
+                  icon: const Icon(Icons.edit_outlined, color: Colors.white),
+                  tooltip: 'Edit',
+                  onPressed: () => _openEditor(context),
+                ),
+                IconButton(
                   icon: const Icon(Icons.share_outlined, color: Colors.white),
                   onPressed: _share,
                 ),
@@ -84,6 +174,11 @@ class _PhotoViewScreenState extends ConsumerState<PhotoViewScreen> {
                   icon: const Icon(Icons.search_outlined, color: Colors.white),
                   tooltip: 'Find Similar',
                   onPressed: _findSimilar,
+                ),
+                IconButton(
+                  icon: const Icon(Icons.delete_outline, color: Colors.white),
+                  tooltip: 'Delete',
+                  onPressed: () => _confirmDelete(context),
                 ),
                 IconButton(
                   icon: const Icon(Icons.info_outline, color: Colors.white),
@@ -97,17 +192,22 @@ class _PhotoViewScreenState extends ConsumerState<PhotoViewScreen> {
         child: PageView.builder(
           controller: _pageController,
           itemCount: widget.assets.length,
-          onPageChanged: (i) => setState(() => _currentIndex = i),
+          onPageChanged: (i) {
+            setState(() => _currentIndex = i);
+            _precacheNeighbors(i);
+          },
           itemBuilder: (context, index) {
             final asset = widget.assets[index];
             return InteractiveViewer(
               minScale: 0.5,
               maxScale: 5.0,
               child: Center(
-                child: AssetEntityImage(
-                  asset,
-                  isOriginal: true,
-                  fit: BoxFit.contain,
+                child: Hero(
+                  tag: 'photo_${asset.id}',
+                  child: AssetEntityImage(
+                    asset,
+                    isOriginal: true,
+                    fit: BoxFit.contain,
                   loadingBuilder: (_, child, progress) {
                     if (progress == null) return child;
                     return Center(
@@ -126,6 +226,7 @@ class _PhotoViewScreenState extends ConsumerState<PhotoViewScreen> {
                       color: Colors.white,
                       size: 64,
                     ),
+                  ),
                   ),
                 ),
               ),

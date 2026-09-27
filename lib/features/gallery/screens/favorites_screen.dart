@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:photo_manager/photo_manager.dart';
+import 'package:photo_manager_image_provider/photo_manager_image_provider.dart';
+import 'package:ai_gallery/core/utils/thumbnail_utils.dart';
 import '../providers/gallery_providers.dart';
 import '../providers/favorites_provider.dart';
 import '../widgets/photo_tile.dart';
@@ -248,6 +250,7 @@ class _FavoritesPinchZoomGridState extends ConsumerState<_FavoritesPinchZoomGrid
   @override
   Widget build(BuildContext context) {
     final photoList = widget.photoList;
+    final thumbnailSize = ThumbnailSizes.forGrid(context, _currentGridSize);
 
     return GestureDetector(
       onScaleStart: _handleScaleStart,
@@ -260,6 +263,7 @@ class _FavoritesPinchZoomGridState extends ConsumerState<_FavoritesPinchZoomGrid
             builder: (context, child) {
               return GridView.builder(
                 controller: _scrollController,
+                cacheExtent: 800,
                 padding: const EdgeInsets.all(2),
                 gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
                   crossAxisCount: _currentGridSize,
@@ -268,11 +272,14 @@ class _FavoritesPinchZoomGridState extends ConsumerState<_FavoritesPinchZoomGrid
                 ),
                 itemCount: photoList.length,
                 itemBuilder: (context, index) {
-                  return _AnimatedFavoritesPhotoTile(
-                    asset: photoList[index],
-                    allAssets: photoList,
-                    index: index,
-                    gridSize: _currentGridSize,
+                  return RepaintBoundary(
+                    child: _AnimatedFavoritesPhotoTile(
+                      asset: photoList[index],
+                      allAssets: photoList,
+                      index: index,
+                      gridSize: _currentGridSize,
+                      thumbnailSize: thumbnailSize,
+                    ),
                   );
                 },
               );
@@ -354,11 +361,15 @@ class _AnimatedFavoritesPhotoTile extends StatefulWidget {
   final int index;
   final int gridSize;
 
+  /// Decoded thumbnail resolution, forwarded to [PhotoTile].
+  final ThumbnailSize thumbnailSize;
+
   const _AnimatedFavoritesPhotoTile({
     required this.asset,
     required this.allAssets,
     required this.index,
     required this.gridSize,
+    this.thumbnailSize = const ThumbnailSize.square(300),
   });
 
   @override
@@ -413,6 +424,7 @@ class _AnimatedFavoritesPhotoTileState extends State<_AnimatedFavoritesPhotoTile
           asset: widget.asset,
           allAssets: widget.allAssets,
           index: widget.index,
+          thumbnailSize: widget.thumbnailSize,
         ),
       ),
     );

@@ -1,9 +1,16 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:photo_manager/photo_manager.dart';
 import 'package:photo_manager_image_provider/photo_manager_image_provider.dart';
+import 'package:share_plus/share_plus.dart';
+import '../../../core/di/providers.dart';
+import '../../editing/providers/edited_photo_providers.dart';
+import '../../editing/screens/edit_screen.dart';
 import '../providers/favorites_provider.dart';
 import '../providers/selection_provider.dart';
+import '../providers/gallery_providers.dart';
+import '../services/media_service.dart';
 import '../screens/photo_view_screen.dart';
 
 /// A single thumbnail tile in the gallery grid.
@@ -12,20 +19,27 @@ class PhotoTile extends ConsumerWidget {
   final List<AssetEntity> allAssets;
   final int index;
 
+  /// Decoded thumbnail resolution. Sized by the parent grid via
+  /// [ThumbnailSizes.forGrid] so small tiles don't over-decode.
+  final ThumbnailSize thumbnailSize;
+
   const PhotoTile({
     super.key,
     required this.asset,
     required this.allAssets,
     required this.index,
+    this.thumbnailSize = const ThumbnailSize.square(300),
   });
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final favs = ref.watch(favoritesProvider);
+    // Fix #4: Use select to only rebuild when THIS asset's favorite status changes,
+    // not when any favorite changes (previously rebuilt all 500 tiles on toggle).
+    final isFav = ref.watch(favoritesProvider.select((v) => v.value?.contains(asset.id) ?? false));
     final selection = ref.watch(selectionProvider);
     final selectionNotifier = ref.read(selectionProvider.notifier);
+    final isEdited = ref.watch(editedPhotoIdsStreamProvider.select((v) => v.value?.contains(asset.id) ?? false));
 
-    final isFav = favs.value?.contains(asset.id) ?? false;
     final isSelected = selection.contains(asset.id);
     final isSelecting = selection.isNotEmpty;
 
@@ -42,7 +56,10 @@ class PhotoTile extends ConsumerWidget {
           );
         }
       },
-      onLongPress: () => selectionNotifier.toggle(asset.id),
+      onLongPress: isSelecting
+          ? () => selectionNotifier.toggle(asset.id)
+          : () => _showContextMenu(
+              context, ref, isFav, selectionNotifier, isSelecting),
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 150),
         decoration: BoxDecoration(
@@ -57,19 +74,22 @@ class PhotoTile extends ConsumerWidget {
         child: Stack(
           fit: StackFit.expand,
           children: [
-            // Thumbnail
+            // Thumbnail (Hero-matched with the full-screen viewer)
             ClipRRect(
               borderRadius: BorderRadius.circular(isSelected ? 4 : 0),
-              child: AssetEntityImage(
-                asset,
-                isOriginal: false,
-                thumbnailSize: const ThumbnailSize.square(300),
-                fit: BoxFit.cover,
-                errorBuilder: (_, __, ___) => Container(
-                  color: Colors.grey[200],
-                  child: const Icon(
-                    Icons.broken_image_outlined,
-                    color: Colors.grey,
+              child: Hero(
+                tag: 'photo_${asset.id}',
+                child: AssetEntityImage(
+                  asset,
+                  isOriginal: false,
+                  thumbnailSize: thumbnailSize,
+                  fit: BoxFit.cover,
+                  errorBuilder: (_, __, ___) => Container(
+                    color: Colors.grey[200],
+                    child: const Icon(
+                      Icons.broken_image_outlined,
+                      color: Colors.grey,
+                    ),
                   ),
                 ),
               ),
@@ -81,9 +101,10 @@ class PhotoTile extends ConsumerWidget {
                 duration: const Duration(milliseconds: 150),
                 decoration: BoxDecoration(
                   color: isSelected
-                      ? Theme.of(
-                          context,
-                        ).colorScheme.primary.withValues(alpha: 0.35)
+                      ? Theme.of(context)
+                          .colorScheme
+                          .primary
+                          .withValues(alpha: 0.35)
                       : Colors.black.withValues(alpha: 0.15),
                   borderRadius: BorderRadius.circular(isSelected ? 4 : 0),
                 ),
@@ -128,8 +149,27 @@ class PhotoTile extends ConsumerWidget {
                 ),
               ),
 
-            // Video duration badge
-            if (asset.type == AssetType.video)
+            // Edit badge (top-right for photos)
+            if (isEdited && !isSelecting && asset.type != AssetType.video)
+              Positioned(
+                top: 4,
+                right: 4,
+                child: Container(
+                  padding: const EdgeInsets.all(3),
+                  decoration: BoxDecoration(
+                    color: Colors.black38,
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: const Icon(
+                    Icons.edit,
+                    size: 12,
+                    color: Colors.white,
+                  ),
+                ),
+              ),
+
+            // Video duration badge + play icon
+            if (asset.type == AssetType.video) ...[
               Positioned(
                 bottom: 4,
                 left: 4,
@@ -152,6 +192,198 @@ class PhotoTile extends ConsumerWidget {
                   ),
                 ),
               ),
+              const Positioned(
+                top: 4,
+                right: 4,
+                child: Icon(
+                  Icons.play_circle_fill,
+                  color: Colors.white70,
+                  size: 20,
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _showContextMenu(
+    BuildContext context,
+    WidgetRef ref,
+    bool isFav,
+    SelectionNotifier selectionNotifier,
+    bool isSelecting,
+  ) {
+    HapticFeedback.mediumImpact();
+    final favoritesNotifier = ref.read(favoritesProvider.notifier);
+    final scaffoldContext = context;
+
+    showModalBottomSheet(
+      context: scaffoldContext,
+      builder: (sheetContext) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // Asset preview header
+            Container(
+              padding: const EdgeInsets.all(16),
+              child: Row(
+                children: [
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(8),
+                    child: AssetEntityImage(
+                      asset,
+                      isOriginal: false,
+                      thumbnailSize: const ThumbnailSize.square(80),
+                      width: 48,
+                      height: 48,
+                      fit: BoxFit.cover,
+                      errorBuilder: (_, __, ___) => Container(
+                        width: 48,
+                        height: 48,
+                        color: Colors.grey[200],
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          asset.type == AssetType.video ? 'Video' : 'Photo',
+                          style: Theme.of(sheetContext).textTheme.titleSmall,
+                        ),
+                        Text(
+                          _formatDate(asset.createDateTime),
+                          style: Theme.of(sheetContext).textTheme.bodySmall?.copyWith(
+                                color: Theme.of(sheetContext)
+                                    .colorScheme
+                                    .onSurfaceVariant,
+                              ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const Divider(height: 1),
+            ListTile(
+              leading: Icon(
+                isFav ? Icons.star : Icons.star_border,
+                color: isFav ? Colors.amber : null,
+              ),
+              title: Text(isFav ? 'Remove from favorites' : 'Add to favorites'),
+              onTap: () {
+                Navigator.pop(sheetContext);
+                HapticFeedback.lightImpact();
+                favoritesNotifier.toggle(asset.id);
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.check_box_outline_blank),
+              title: const Text('Select'),
+              onTap: () {
+                Navigator.pop(sheetContext);
+                selectionNotifier.toggle(asset.id);
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.edit_outlined),
+              title: const Text('Edit'),
+              enabled: asset.type != AssetType.video,
+              onTap: () {
+                Navigator.pop(sheetContext);
+                if (asset.type == AssetType.video) {
+                  if (scaffoldContext.mounted) {
+                    ScaffoldMessenger.of(scaffoldContext).showSnackBar(
+                      const SnackBar(content: Text('Editing is available for photos only')),
+                    );
+                  }
+                  return;
+                }
+                Navigator.of(scaffoldContext).push(
+                  MaterialPageRoute(builder: (_) => EditScreen(photoId: asset.id)),
+                );
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.share_outlined),
+              title: const Text('Share'),
+              onTap: () async {
+                Navigator.pop(sheetContext);
+                final file = await asset.file;
+                if (file != null && scaffoldContext.mounted) {
+                  await Share.shareXFiles([XFile(file.path)]);
+                }
+              },
+            ),
+            ListTile(
+              leading: Icon(Icons.delete_outline, color: Theme.of(sheetContext).colorScheme.error),
+              title: Text('Delete', style: TextStyle(color: Theme.of(sheetContext).colorScheme.error)),
+              onTap: () async {
+                Navigator.pop(sheetContext);
+                final confirmed = await showDialog<bool>(
+                  context: scaffoldContext,
+                  builder: (ctx) => AlertDialog(
+                    title: const Text('Delete photo?'),
+                    content: const Text('This will permanently delete the photo from your device.'),
+                    actions: [
+                      TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+                      FilledButton(
+                        style: FilledButton.styleFrom(backgroundColor: Theme.of(ctx).colorScheme.error),
+                        onPressed: () => Navigator.pop(ctx, true),
+                        child: const Text('Delete'),
+                      ),
+                    ],
+                  ),
+                );
+                if (confirmed != true) return;
+                final deleted = await MediaService.deleteAssets([asset.id]);
+                if (deleted > 0) {
+                  try {
+                    final db = await ref.read(appDatabaseProvider.future);
+                    await db.database.delete('photo_metadata', where: 'photo_id = ?', whereArgs: [asset.id]);
+                    await db.database.delete('embeddings', where: 'photo_id = ?', whereArgs: [asset.id]);
+                    await db.database.delete('faces', where: 'photo_id = ?', whereArgs: [asset.id]);
+                    await db.database.delete('object_tags', where: 'photo_id = ?', whereArgs: [asset.id]);
+                    await db.database.delete('ocr_text', where: 'photo_id = ?', whereArgs: [asset.id]);
+                    await db.database.delete('favorites', where: 'asset_id = ?', whereArgs: [asset.id]);
+                    await db.database.delete('edit_recipes', where: 'photo_id = ?', whereArgs: [asset.id]);
+                    await db.database.delete('analysis_state', where: 'photo_id = ?', whereArgs: [asset.id]);
+                  } catch (_) {}
+                  ref.invalidate(photoListProvider);
+                  ref.invalidate(albumListProvider);
+                }
+                if (!scaffoldContext.mounted) return;
+                if (deleted > 0) {
+                  ScaffoldMessenger.of(scaffoldContext).showSnackBar(
+                    const SnackBar(content: Text('Photo deleted')),
+                  );
+                } else {
+                  ScaffoldMessenger.of(scaffoldContext).showSnackBar(
+                    const SnackBar(content: Text('Failed to delete photo')),
+                  );
+                }
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.info_outline),
+              title: const Text('Details'),
+              onTap: () {
+                Navigator.pop(sheetContext);
+                Navigator.of(scaffoldContext).push(
+                  MaterialPageRoute(
+                    builder: (_) => PhotoViewScreen(
+                      assets: [asset],
+                      initialIndex: 0,
+                    ),
+                  ),
+                );
+              },
+            ),
           ],
         ),
       ),
@@ -162,5 +394,14 @@ class PhotoTile extends ConsumerWidget {
     final m = seconds ~/ 60;
     final s = seconds % 60;
     return '$m:${s.toString().padLeft(2, '0')}';
+  }
+
+  String _formatDate(DateTime date) {
+    const months = [
+      '', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+    ];
+    return '${months[date.month]} ${date.day}, ${date.year}  '
+        '${date.hour.toString().padLeft(2, '0')}:${date.minute.toString().padLeft(2, '0')}';
   }
 }

@@ -64,21 +64,32 @@ class _PeopleScreenState extends ConsumerState<PeopleScreen>
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final clustersAsync = ref.watch(peopleClustersProvider);
+    final isLoading = clustersAsync.isLoading;
 
     return Scaffold(
       appBar: AppBar(
         title: const Text('People'),
-        bottom: TabBar(
-          controller: _tabController,
-          tabs: const [
-            Tab(text: 'Named'),
-            Tab(text: 'Unknown'),
-          ],
+        bottom: PreferredSize(
+          preferredSize: const Size.fromHeight(48 + 2),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TabBar(
+                controller: _tabController,
+                tabs: const [
+                  Tab(text: 'Named'),
+                  Tab(text: 'Unknown'),
+                ],
+              ),
+              if (isLoading)
+                const LinearProgressIndicator(minHeight: 2),
+            ],
+          ),
         ),
         actions: [
           IconButton(
             icon: const Icon(Icons.refresh),
-            onPressed: _recluster,
+            onPressed: isLoading ? null : _recluster,
             tooltip: 'Recluster all faces',
           ),
           PopupMenuButton<String>(
@@ -103,7 +114,16 @@ class _PeopleScreenState extends ConsumerState<PeopleScreen>
         ],
       ),
       body: clustersAsync.when(
-        loading: () => const Center(child: CircularProgressIndicator()),
+        loading: () => const Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              CircularProgressIndicator(),
+              SizedBox(height: 12),
+              Text('Processing faces…'),
+            ],
+          ),
+        ),
         error: (error, stack) => _buildErrorState(theme, error),
         data: (clusters) {
           if (clusters.isEmpty) return _buildEmptyState(theme);
@@ -176,12 +196,8 @@ class _PeopleScreenState extends ConsumerState<PeopleScreen>
   }
 
   Widget _buildClusteredView(List<PersonCluster> clusters) {
-    final namedClusters = clusters
-        .where((c) => c.label != 'Unknown Person' && !c.label.startsWith('Unknown Person'))
-        .toList();
-    final unknownClusters = clusters
-        .where((c) => c.label == 'Unknown Person' || c.label.startsWith('Unknown Person'))
-        .toList();
+    final namedClusters = clusters.where((c) => !c.isUnknown).toList();
+    final unknownClusters = clusters.where((c) => c.isUnknown).toList();
 
     return TabBarView(
       controller: _tabController,
@@ -215,22 +231,28 @@ class _PeopleScreenState extends ConsumerState<PeopleScreen>
       );
     }
 
-    return GridView.builder(
-      padding: const EdgeInsets.all(12),
-      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: 3,
-        mainAxisSpacing: 12,
-        crossAxisSpacing: 12,
-        childAspectRatio: 0.82,
-      ),
-      itemCount: clusters.length,
-      itemBuilder: (context, index) => _PersonClusterCard(
-        cluster: clusters[index],
-        onTap: () => _openPersonDetail(clusters[index]),
-        onRename: () => _renameCluster(clusters[index]),
-        onDelete: () => _deleteCluster(clusters[index]),
-        onMerge: () => _openPersonDetail(clusters[index]),
-      ),
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final width = constraints.maxWidth;
+        final crossAxisCount = width < 360 ? 2 : width < 600 ? 3 : 4;
+        return GridView.builder(
+          padding: const EdgeInsets.all(12),
+          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: crossAxisCount,
+            mainAxisSpacing: 12,
+            crossAxisSpacing: 12,
+            childAspectRatio: 0.82,
+          ),
+          itemCount: clusters.length,
+          itemBuilder: (context, index) => _PersonClusterCard(
+            cluster: clusters[index],
+            onTap: () => _openPersonDetail(clusters[index]),
+            onRename: () => _renameCluster(clusters[index]),
+            onDelete: () => _deleteCluster(clusters[index]),
+            onMerge: () => _openPersonDetail(clusters[index]),
+          ),
+        );
+      },
     );
   }
 
@@ -877,6 +899,7 @@ class _PersonDetailScreenState extends ConsumerState<PersonDetailScreen> {
           database: _database,
         );
         await peopleService.moveFace(face.id, selected.label);
+        if (!mounted) return;
         setState(() {
           _faces = _faces.where((f) => f.id != face.id).toList();
         });
@@ -902,6 +925,7 @@ class _PersonDetailScreenState extends ConsumerState<PersonDetailScreen> {
         database: _database,
       );
       await peopleService.removeFaceFromPerson(face.id);
+      if (!mounted) return;
       setState(() {
         _faces = _faces.where((f) => f.id != face.id).toList();
       });
@@ -947,6 +971,7 @@ class _PersonDetailScreenState extends ConsumerState<PersonDetailScreen> {
           database: _database,
         );
         await peopleService.removeFaceFromPerson(face.id);
+        if (!mounted) return;
         setState(() {
           _faces = _faces.where((f) => f.id != face.id).toList();
         });
@@ -1051,6 +1076,7 @@ class _PersonDetailScreenState extends ConsumerState<PersonDetailScreen> {
         final faceIds = _selectedFaceIds.toList();
 
         for (final faceId in faceIds) {
+          if (!mounted) return;
           if (destinationLabel != null) {
             await peopleService.moveFace(faceId, destinationLabel);
           } else {
@@ -1058,6 +1084,7 @@ class _PersonDetailScreenState extends ConsumerState<PersonDetailScreen> {
           }
         }
 
+        if (!mounted) return;
         setState(() {
           _faces = _faces.where((f) => !_selectedFaceIds.contains(f.id)).toList();
           _isSplitMode = false;
@@ -1210,9 +1237,7 @@ class _PersonDetailScreenState extends ConsumerState<PersonDetailScreen> {
           database: _database,
         );
         await peopleService.setPersonCoverPhoto(
-          widget.cluster.faces.isNotEmpty
-              ? widget.cluster.faces.first.personId ?? ''
-              : '',
+          widget.cluster.personId,
           selected.photoId,
         );
         if (mounted) {
@@ -1267,6 +1292,7 @@ class _PersonDetailScreenState extends ConsumerState<PersonDetailScreen> {
         );
         if (!mounted) return;
         await service.deleteCluster(widget.cluster.label);
+        if (!mounted) return;
         Navigator.pop(context, true);
       } catch (e) {
         ScaffoldMessenger.of(
@@ -1338,10 +1364,12 @@ class _PersonClusterCard extends StatelessWidget {
                   ),
                   const SizedBox(height: 2),
                   Text(
-                    '${cluster.faceCount} ${cluster.faceCount == 1 ? 'face' : 'faces'}',
+                    '${cluster.faceCount} ${cluster.faceCount == 1 ? 'face' : 'faces'} • ${cluster.photoCount} ${cluster.photoCount == 1 ? 'photo' : 'photos'}',
                     style: theme.textTheme.bodySmall?.copyWith(
                       color: theme.colorScheme.onSurfaceVariant,
                     ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                   ),
                 ],
               ),
@@ -1423,7 +1451,8 @@ class _FaceThumbnail extends StatelessWidget {
                 return AssetEntityImage(
                   snapshot.data!,
                   isOriginal: false,
-                  thumbnailSize: const ThumbnailSize.square(300),
+                  // Face tiles are small — 160px is plenty, 300px over-decodes.
+                  thumbnailSize: const ThumbnailSize.square(160),
                   fit: BoxFit.cover,
                   errorBuilder: (_, __, ___) => _buildPlaceholder(theme),
                 );

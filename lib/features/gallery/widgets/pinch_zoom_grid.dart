@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:photo_manager/photo_manager.dart';
+import 'package:photo_manager_image_provider/photo_manager_image_provider.dart';
+import 'package:ai_gallery/core/utils/thumbnail_utils.dart';
 import '../providers/gallery_providers.dart';
 import 'photo_tile.dart';
 
@@ -172,6 +174,9 @@ class _PinchZoomGridState extends ConsumerState<PinchZoomGrid>
   Widget build(BuildContext context) {
     final photoList = widget.photoList;
     final currentGridSize = _gridSizes[_currentGridSizeIndex];
+    // Decode thumbnails at the actual tile size × DPR instead of a fixed
+    // 300px — at 5-6 columns this cuts per-tile decode work dramatically.
+    final thumbnailSize = ThumbnailSizes.forGrid(context, currentGridSize);
 
     return GestureDetector(
       onScaleStart: _handleScaleStart,
@@ -187,6 +192,9 @@ class _PinchZoomGridState extends ConsumerState<PinchZoomGrid>
                 }),
             child: GridView.builder(
               controller: widget.scrollController,
+              // Keep a few rows of tiles alive off-screen so fast flings
+              // don't rebuild/decode tiles every frame.
+              cacheExtent: 800,
               padding: const EdgeInsets.all(2),
               gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
                 crossAxisCount: currentGridSize,
@@ -205,12 +213,17 @@ class _PinchZoomGridState extends ConsumerState<PinchZoomGrid>
                     ),
                   );
                 }
-                return AnimatedPhotoTile(
-                  key: ValueKey(photoList[index].id),
-                  asset: photoList[index],
-                  allAssets: photoList,
-                  index: index,
-                  gridSize: currentGridSize,
+                // RepaintBoundary keeps a scrolling tile from repainting
+                // its neighbors every frame.
+                return RepaintBoundary(
+                  child: AnimatedPhotoTile(
+                    key: ValueKey(photoList[index].id),
+                    asset: photoList[index],
+                    allAssets: photoList,
+                    index: index,
+                    gridSize: currentGridSize,
+                    thumbnailSize: thumbnailSize,
+                  ),
                 );
               },
               semanticChildCount: photoList.length,
@@ -305,12 +318,16 @@ class AnimatedPhotoTile extends StatefulWidget {
   final int index;
   final int gridSize;
 
+  /// Decoded thumbnail resolution, forwarded to [PhotoTile].
+  final ThumbnailSize thumbnailSize;
+
   const AnimatedPhotoTile({
     super.key,
     required this.asset,
     required this.allAssets,
     required this.index,
     required this.gridSize,
+    this.thumbnailSize = const ThumbnailSize.square(300),
   });
 
   @override
@@ -323,17 +340,29 @@ class _AnimatedPhotoTileState extends State<AnimatedPhotoTile>
   late Animation<double> _scaleAnimation;
   late Animation<double> _opacityAnimation;
   late Animation<double> _slideAnimation;
+  bool _shouldAnimate = true;
 
   @override
   void initState() {
     super.initState();
+    // Fix #4: Only animate first 30 tiles to avoid 500 simultaneous controllers
+    // causing jank on mid-tier devices. Remaining tiles render without animation.
+    _shouldAnimate = widget.index < 30;
+    if (!_shouldAnimate) {
+      // No controller needed — will build directly
+      _controller = AnimationController(vsync: this, duration: Duration.zero);
+      _scaleAnimation = AlwaysStoppedAnimation(1.0);
+      _opacityAnimation = AlwaysStoppedAnimation(1.0);
+      _slideAnimation = AlwaysStoppedAnimation(0.0);
+      return;
+    }
     _controller = AnimationController(
-      duration: const Duration(milliseconds: 450),
+      duration: const Duration(milliseconds: 350),
       vsync: this,
     );
 
-    final delay = (widget.index % 10) * 20;
-    _slideAnimation = Tween<double>(begin: 0.15, end: 0.0).animate(
+    final delay = (widget.index % 10) * 15;
+    _slideAnimation = Tween<double>(begin: 0.12, end: 0.0).animate(
       CurvedAnimation(
         parent: _controller,
         curve: Interval(delay / 1000.0, 1.0, curve: Curves.easeOutCubic),
@@ -341,7 +370,7 @@ class _AnimatedPhotoTileState extends State<AnimatedPhotoTile>
     );
 
     _scaleAnimation = Tween<double>(
-      begin: 0.92,
+      begin: 0.94,
       end: 1.0,
     ).animate(CurvedAnimation(parent: _controller, curve: Curves.easeOutCubic));
     _opacityAnimation = Tween<double>(
@@ -354,6 +383,7 @@ class _AnimatedPhotoTileState extends State<AnimatedPhotoTile>
   @override
   void didUpdateWidget(AnimatedPhotoTile oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (!_shouldAnimate) return;
     if (oldWidget.gridSize != widget.gridSize) {
       _controller.reset();
       _controller.forward();
@@ -368,6 +398,14 @@ class _AnimatedPhotoTileState extends State<AnimatedPhotoTile>
 
   @override
   Widget build(BuildContext context) {
+    if (!_shouldAnimate) {
+      return PhotoTile(
+        asset: widget.asset,
+        allAssets: widget.allAssets,
+        index: widget.index,
+        thumbnailSize: widget.thumbnailSize,
+      );
+    }
     return AnimatedBuilder(
       animation: _controller,
       builder: (context, child) {
@@ -383,6 +421,7 @@ class _AnimatedPhotoTileState extends State<AnimatedPhotoTile>
         asset: widget.asset,
         allAssets: widget.allAssets,
         index: widget.index,
+        thumbnailSize: widget.thumbnailSize,
       ),
     );
   }
